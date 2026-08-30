@@ -31,7 +31,12 @@ OldEmby_PRIVATE_FRAMEWORKS =
 # iOS 6 compatibility: no NSURLSession, use NSURLConnection; frame layout, not AutoLayout-dependent
 OldEmby_CFLAGS = -fobjc-arc -mios-version-min=6.0 -Wno-deprecated-declarations -Wno-unknown-pragmas -O2 -ISources -I.
 OldEmby_LDFLAGS = -Wl,-segalign,4000
-OldEmby_CODESIGN_FLAGS = -Sentitlements.plist
+
+# No entitlements: this is a regular GUI app. Theos signs with a plain
+# `ldid -S` pseudo-signature, which sideload tools (爱思助手/AltStore/
+# Sideloadly) replace wholesale when re-signing. Embedded jailbreak
+# entitlements (platform-application, no-container) are not grantable by
+# personal certificates and make re-signed installs fail as "damaged".
 
 # Info.plist is picked up automatically: Theos copies the Resources/ dir into
 # the .app and moves Resources/Info.plist to the bundle root.

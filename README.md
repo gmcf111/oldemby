@@ -17,7 +17,6 @@
 oldemby/
 ├── Makefile                      # Theos application, ARCHS=armv7, TARGET=iphone:clang:9.3:6.0
 ├── control                       # Debian control (越狱包元信息)
-├── entitlements.plist            # ldid 伪签名权限
 ├── OldEmby.plist                 # (保留) Tweak 过滤器占位
 ├── Resources/
 │   └── Info.plist                # CFBundleIdentifier, MinimumOSVersion 6.0, UIBackgroundModes audio
@@ -50,7 +49,7 @@ oldemby/
 
 - `Makefile` 遵循 `$(THEOS)/makefiles/common.mk` + `$(THEOS_MAKE_PATH)/application.mk`
 - `control` 与 `OldEmby.plist` 为 Theos 打包所需
-- `THEOS_PACKAGE_SCHEME=rootless` 兼容现代越狱，同时产物通过 `Payload/*.app → .ipa` 提供非越狱侧载
+- **不携带 entitlements**：普通 GUI 应用无需任何权限；Theos 构建 `ldid -S` 纯伪签名，侧载工具 (爱思助手/AltStore/Sideloadly) 重签时整体替换签名，嵌入越狱权限 (platform-application 等) 反而会导致重签安装失败（提示"IPA 已损坏"）
 
 ## SDK 来源说明（版权合规）
 
@@ -76,7 +75,7 @@ oldemby/
 3. **获取 ldid**: 优先 `apt`，回退 Procursus 预编译 `ldid_linux_x86_64`，再回退源码编译
 4. **获取 iPhoneOS SDK**: Secrets 感知 + 公开回退 + 多格式解压 (`tar.xz`/`tar.gz`/`zip`)，放置到 `$THEOS/sdks/`
 5. **`make package`**: `ARCHS=armv7 TARGET=iphone:clang:9.3:6.0 FINALPACKAGE=1`
-6. **组装 IPA**: `Payload/OldEmby.app` → `zip -r OldEmby-*.ipa`，`ldid -S entitlements.plist` 伪签名
+6. **组装 IPA**: `Payload/OldEmby.app` → `zip -r OldEmby-*.ipa`（Theos 已 `ldid -S` 纯伪签名，无 entitlements）+ Info.plist 结构自检
 7. **上传 Artifact**: `OldEmby-<sha>-armv7` (含 `.ipa` 与 `.deb`, 保留 14 天)
 
 触发: GitHub 网页 → Actions → *OldEmby Build* → Run workflow
