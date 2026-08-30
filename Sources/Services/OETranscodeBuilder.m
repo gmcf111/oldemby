@@ -176,7 +176,9 @@
         NSString *resolvedItemId = itemId ?: response[@"ItemId"] ?: @"";
         if (!resolvedItemId.length) return nil;
         NSString *resource = isAudio ? @"Audio" : @"Videos";
-        NSString *staticFlag = s.directPlay ? @"Static=true" : @"Static=false";
+        // This method takes no settings argument; the Static flag mirrors the
+        // global preference the caller used when building the PlaybackInfo body.
+        NSString *staticFlag = [OETranscodeSettings sharedSettings].directPlay ? @"Static=true" : @"Static=false";
         url = [NSString stringWithFormat:@"/%@/%@/stream?MediaSourceId=%@&%@", resource, resolvedItemId, msId, staticFlag];
     }
     // Ensure absolute URL
