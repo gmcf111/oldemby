@@ -1,0 +1,31 @@
+# Theos build artifacts
+.theos/
+obj/
+packages/
+Payload/
+*.deb
+*.ipa
+*.dSYM/
+*.o
+*.a
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# SDK (never commit full SDK due to copyright)
+sdks/
+iPhoneOS*.sdk/
+theos/sdks/
+
+# Secrets
+.env
+*.pem
+*.mobileprovision
+
+# Prompt file keep but not needed for build
+# opencode-prompt-legacy-emby-player.md
+
+opencode-prompt-legacy-emby-player.md
