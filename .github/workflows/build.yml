@@ -35,18 +35,33 @@ jobs:
       - name: Install dependencies
         run: |
           set -e
-          sudo apt-get update
+          # NB: ldid is NOT in Ubuntu repos and must not appear in these apt lines -
+          # one unknown package makes apt abort the whole line. ldid gets its own step.
+          # Mirrors the dependency list of theos/bin/install-theos (Debian case).
+          sudo apt-get update -q
           sudo apt-get install -y \
-            clang lld \
-            git curl wget perl fakeroot \
-            libplist-utils uuid-dev libssl-dev \
-            make ldid 2>/dev/null || true
-          # Ensure fakeroot, dpkg-deb available
-          sudo apt-get install -y dpkg-dev binutils xz-utils unzip zip || true
-          clang --version
-          ld --version || ld.lld --version || true
-          fakeroot --version || true
+            build-essential fakeroot rsync curl perl zip git libxml2 \
+            libplist-utils dpkg-dev binutils xz-utils unzip zip file
+          # Runtime dependency of the iOS toolchain (per theos/bin/install-theos)
+          sudo apt-get install -y libtinfo6
+          # Prefer the sysv fakeroot backend, as install-theos does
+          sudo update-alternatives --set fakeroot /usr/bin/fakeroot-sysv 2>/dev/null || true
+          fakeroot --version
           echo "deps installed"
+
+      - name: Install ldid
+        run: |
+          set -e
+          if command -v ldid >/dev/null 2>&1; then
+            echo "ldid already available at $(command -v ldid)"
+            exit 0
+          fi
+          echo "Installing ldid from Procursus..."
+          curl -LfsS --retry 3 -o /tmp/ldid \
+            "https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64"
+          chmod +x /tmp/ldid
+          sudo mv /tmp/ldid /usr/local/bin/ldid
+          command -v ldid && echo "ldid ready"
 
       - name: Install Theos
         run: |
@@ -56,36 +71,28 @@ jobs:
           else
             git clone --recursive https://github.com/theos/theos.git "$THEOS"
           fi
-          echo "THEOS=$THEOS" >> $GITHUB_ENV
-          ls -lh "$THEOS/makefiles/common.mk" || true
-          # Theos toolchain bootstrap (installs iOS toolchain stubs if needed)
-          # Use official installer script where available
-          bash -c '$THEOS/bin/update-theos 2>&1 | tail -20' || true
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          ls -lh "$THEOS/makefiles/common.mk"
 
-      - name: Install ldid (fallback if apt failed)
+      # The missing step that used to produce a ~1KB "IPA": without this
+      # toolchain $THEOS/toolchain/linux/iphone/bin/clang does not exist and
+      # every compile fails with Error 127. Same toolchain the official
+      # theos/bin/install-theos installs on Linux.
+      - name: Install iOS toolchain (clang for linux -> iphone)
         run: |
           set -e
-          if command -v ldid >/dev/null 2>&1; then
-            ldid --help 2>&1 | head -5 || true
-            exit 0
-          fi
-          echo "Installing ldid from Procursus..."
-          # Try procursus prebuilt static binary
-          curl -LfsS -o /tmp/ldid https://github.com/ProcursusTeam/ldid/releases/latest/download/ldid_linux_x86_64 2>&1 || \
-          curl -LfsS -o /tmp/ldid https://github.com/theos/theos/releases/latest/download/ldid 2>&1 || true
-          if [ -f /tmp/ldid ]; then
-            chmod +x /tmp/ldid
-            sudo mv /tmp/ldid /usr/local/bin/ldid
-            ldid --help 2>&1 | head -5 || true
+          if [ -x "$THEOS/toolchain/linux/iphone/bin/clang" ]; then
+            echo "Toolchain already installed"
           else
-            echo "ldid download failed, building from source..."
-            git clone https://github.com/ProcursusTeam/ldid.git /tmp/ldid-src
-            cd /tmp/ldid-src
-            # need libplist
-            make -j$(nproc) 2>&1 | tail -20 || true
-            sudo cp ldid /usr/local/bin/ldid 2>/dev/null || sudo cp ./ldid /usr/local/bin/ldid || true
+            ARCH=$(uname -m)
+            echo "Downloading iOSToolchain (${ARCH})..."
+            curl -fL --retry 3 --retry-delay 5 -o /tmp/toolchain.tar.xz \
+              "https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-${ARCH}.tar.xz"
+            ls -lh /tmp/toolchain.tar.xz
+            mkdir -p "$THEOS/toolchain"
+            tar -xJf /tmp/toolchain.tar.xz -C "$THEOS/toolchain/"
           fi
-          command -v ldid && echo "ldid ready" || (echo "ldid missing but continue (make will warn)"; true)
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version | head -3
 
       - name: Fetch iPhoneOS SDK (Secrets-aware, no log leak)
         env:
@@ -94,8 +101,8 @@ jobs:
         run: |
           set -e
           mkdir -p "$THEOS/sdks"
-          echo "::add-mask::$SDK_URL" 2>/dev/null || true
-          echo "::add-mask::$SDK_MIRROR_URL" 2>/dev/null || true
+          if [ -n "$SDK_URL" ]; then echo "::add-mask::$SDK_URL"; fi
+          if [ -n "$SDK_MIRROR_URL" ]; then echo "::add-mask::$SDK_MIRROR_URL"; fi
           echo "Checking SDK in \$THEOS/sdks..."
           ls -d "$THEOS"/sdks/*.sdk 2>&1 | head -20 || echo "No SDK yet"
 
@@ -116,20 +123,25 @@ jobs:
             local url="$1"
             local out="/tmp/sdk.tar.xz"
             echo "Fetching SDK from: ${url:0:60}... (truncated for log hygiene)"
-            # Mask URL in logs already via add-mask
-            set +x
             if curl -LfsS --retry 3 --retry-delay 5 -o "$out" "$url"; then
               echo "Download OK: $(du -h "$out" | cut -f1)"
-              # Detect type: tar.xz vs zip vs tar.gz
               if file "$out" | grep -q "XZ"; then
-                tar -xf "$out" -C "$THEOS/sdks" 2>&1 | tail -5 || tar -xJf "$out" -C "$THEOS/sdks"
+                tar -xJf "$out" -C "$THEOS/sdks"
               elif file "$out" | grep -q "gzip"; then
-                tar -xzf "$out" -C "$THEOS/sdks" 2>&1 | tail -5 || tar -xzf "$out" -C /tmp && cp -R /tmp/iOS-SDKs-master/iPhoneOS9.3.sdk "$THEOS/sdks/" 2>/dev/null || true
-              elif file "$out" | grep -q "Zip"; then
-                unzip -q "$out" -d /tmp && cp -R /tmp/sdks-master/*.sdk "$THEOS/sdks/" 2>/dev/null || cp -R /tmp/*/*.sdk "$THEOS/sdks/" 2>/dev/null || true
+                # Mirror archives (e.g. xybp888/iOS-SDKs) wrap SDKs in a top-level dir
+                rm -rf /tmp/ios-sdks
+                mkdir -p /tmp/ios-sdks
+                tar -xzf "$out" -C /tmp/ios-sdks
+                cp -R /tmp/ios-sdks/*/iPhoneOS9.3.sdk "$THEOS/sdks/" 2>/dev/null || \
+                  cp -R /tmp/ios-sdks/*/iPhoneOS*.sdk "$THEOS/sdks/" 2>/dev/null || true
+              elif file "$out" | grep -qi "zip"; then
+                rm -rf /tmp/sdk-unzip
+                mkdir -p /tmp/sdk-unzip
+                unzip -q "$out" -d /tmp/sdk-unzip
+                cp -R /tmp/sdk-unzip/*/*.sdk "$THEOS/sdks/" 2>/dev/null || \
+                  cp -R /tmp/sdk-unzip/*.sdk "$THEOS/sdks/" 2>/dev/null || true
               else
-                # Try tar anyway
-                tar -xf "$out" -C "$THEOS/sdks" 2>&1 | tail -20 || true
+                tar -xf "$out" -C "$THEOS/sdks" || true
               fi
               return 0
             else
@@ -138,14 +150,13 @@ jobs:
             fi
           }
 
-          # If SDK already present, skip
+          # If SDK already present, skip download
           if ls -d "$THEOS"/sdks/iPhoneOS*.sdk >/dev/null 2>&1; then
             echo "SDK already present, skip download"
             ls -lh "$THEOS/sdks/"
           else
             if ! fetch_sdk "$EFFECTIVE_URL"; then
               echo "Primary SDK fetch failed, trying mirror fallback..."
-              # Try public mirror if secrets failed or primary failed
               MIRROR="${SDK_MIRROR_URL:-$SDK_FALLBACK_MIRROR}"
               fetch_sdk "$MIRROR" || {
                 echo "::error::Failed to fetch any SDK. Check Secrets.SDK_URL or network."
@@ -156,104 +167,81 @@ jobs:
 
           echo "=== SDKs installed ==="
           ls -lh "$THEOS/sdks/" | head -40
-          # Verify 9.3 exists (needed for TARGET=iphone:clang:9.3:6.0)
           if [ ! -d "$THEOS/sdks/iPhoneOS9.3.sdk" ]; then
-            echo "iPhoneOS9.3.sdk missing, attempting to extract/normalize..."
-            # If we got master.tar.gz of xybp888, extract specific sdk
-            if [ -f /tmp/sdk.tar.xz ] && file /tmp/sdk.tar.xz | grep -q gzip; then
-              rm -rf /tmp/ios-sdks
-              mkdir -p /tmp/ios-sdks
-              tar -xzf /tmp/sdk.tar.xz -C /tmp/ios-sdks --strip-components=1 2>&1 | tail -5 || true
-              if [ -d /tmp/ios-sdks/iPhoneOS9.3.sdk ]; then
-                cp -R /tmp/ios-sdks/iPhoneOS9.3.sdk "$THEOS/sdks/"
-              elif ls -d /tmp/ios-sdks/*.sdk >/dev/null 2>&1; then
-                # Pick any 9.x or closest
-                cp -R /tmp/ios-sdks/iPhoneOS*.sdk "$THEOS/sdks/" 2>/dev/null || true
-              fi
-            fi
+            echo "::error::iPhoneOS9.3.sdk missing (required for TARGET=iphone:clang:9.3:6.0)"
+            ls -d "$THEOS"/sdks/*.sdk 2>&1 | head -20
+            exit 1
           fi
-
-          ls -d "$THEOS"/sdks/*.sdk 2>&1 | head -20
           echo "SDK setup complete"
-          # Show SDKSettings without leaking path
-          cat "$THEOS/sdks/iPhoneOS9.3.sdk/SDKSettings.plist" 2>&1 | head -20 || true
 
       - name: Build (make package)
         run: |
-          set -e
+          set -e -o pipefail
           export THEOS="$THEOS"
           echo "THEOS=$THEOS"
           echo "ARCHS=armv7 TARGET=iphone:clang:9.3:6.0"
-          # Ensure clean
           make clean 2>&1 | tail -10 || true
-          # Build
-          make -j$(nproc) package FINALPACKAGE=1 2>&1 | tail -n 100
-          echo "=== Build artifacts ==="
-          ls -R .theos 2>&1 | head -100 || true
-          ls -lh packages/ 2>&1 | head -20 || true
-          ls -lh *.ipa 2>&1 | head -20 || true
-          ls -lh *.deb 2>&1 | head -20 || true
+          if [ "${{ inputs.build_type }}" = "debug" ]; then
+            make -j"$(nproc)" package DEBUG=1
+          else
+            make -j"$(nproc)" package FINALPACKAGE=1
+          fi
 
-      - name: Assemble IPA (Payload/AppName.app → .ipa)
-        if: always()
+          echo "=== Build artifacts ==="
+          ls -R .theos | head -60 || true
+          ls -lh packages/ || true
+
+          # Fail loudly instead of packaging a hollow .app
+          BIN=".theos/obj/OldEmby.app/OldEmby"
+          if [ ! -f "$BIN" ]; then
+            echo "::error::Build produced no binary at $BIN"
+            exit 1
+          fi
+          file "$BIN"
+          file "$BIN" | grep -q "Mach-O" || { echo "::error::$BIN is not a Mach-O binary"; exit 1; }
+          ls -lh "$BIN"
+
+      - name: Assemble IPA (Payload/OldEmby.app → .ipa)
         run: |
           set -e
-          # Theos application may have produced .deb; we produce IPA explicitly
-          APP_PATH=$(find .theos -name "OldEmby.app" -type d 2>/dev/null | head -1)
+          APP_PATH=$(find .theos -type d -name "OldEmby.app" | head -1)
           if [ -z "$APP_PATH" ]; then
-            # Fallback: check obj dir
-            APP_PATH=$(find . -path "*/obj/*OldEmby.app" -type d 2>/dev/null | head -1 || true)
+            echo "::error::OldEmby.app not found"
+            exit 1
           fi
-          echo "App path: ${APP_PATH:-NOT_FOUND}"
-          if [ -n "$APP_PATH" ] && [ -d "$APP_PATH" ]; then
-            rm -rf Payload
-            mkdir -p Payload
-            cp -R "$APP_PATH" Payload/
-            # ensure ldid signed (idempotent)
-            ldid -S entitlements.plist "Payload/OldEmby.app/OldEmby" 2>&1 | head -5 || ldid -Sentitlements.plist "Payload/OldEmby.app/OldEmby" 2>&1 | head -5 || true
-            VERSION=$(grep -m1 "Version:" control | awk '{print $2}' || echo "1.0.0")
-            COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "local")
-            IPA_NAME="OldEmby-${VERSION}-${COMMIT}-armv7.ipa"
-            zip -r "$IPA_NAME" Payload >/dev/null
-            echo "IPA created: $IPA_NAME"
-            ls -lh "$IPA_NAME"
-            # Also keep generic name for artifact
-            cp "$IPA_NAME" OldEmby-armv7.ipa 2>/dev/null || true
-          else
-            echo "::warning::OldEmby.app not found, checking packages/debs..."
-            ls -R 2>&1 | head -100 || true
-            # If deb exists, extract to get app for IPA
-            DEB=$(ls packages/*.deb 2>/dev/null | head -1 || true)
-            if [ -n "$DEB" ] && [ -f "$DEB" ]; then
-              echo "Found deb: $DEB, extracting..."
-              rm -rf /tmp/deb_extract Payload
-              mkdir -p /tmp/deb_extract
-              dpkg-deb -x "$DEB" /tmp/deb_extract 2>&1 | head -10 || ar x "$DEB" 2>&1 | head -10 || true
-              APP2=$(find /tmp/deb_extract -name "OldEmby.app" -type d 2>/dev/null | head -1)
-              if [ -n "$APP2" ]; then
-                mkdir -p Payload
-                cp -R "$APP2" Payload/
-                VERSION=$(grep -m1 "Version:" control | awk '{print $2}' || echo "1.0.0")
-                COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "local")
-                IPA_NAME="OldEmby-${VERSION}-${COMMIT}-armv7.ipa"
-                zip -r "$IPA_NAME" Payload >/dev/null
-                ls -lh "$IPA_NAME"
-                cp "$IPA_NAME" OldEmby-armv7.ipa 2>/dev/null || true
-              fi
-            fi
+          BIN="$APP_PATH/OldEmby"
+          if [ ! -f "$BIN" ]; then
+            echo "::error::OldEmby.app has no executable binary; refusing to package an empty IPA"
+            exit 1
           fi
-          ls -lh *.ipa 2>&1 | head -20 || echo "No IPA produced"
+          file "$BIN"
+          file "$BIN" | grep -q "Mach-O" || { echo "::error::$BIN is not a Mach-O binary"; exit 1; }
+
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          # ldid entitlements syntax is -S<file> (no space). Theos already signs at
+          # build time; this idempotent re-sign guarantees the entitlements are present.
+          ldid -Sentitlements.plist "Payload/OldEmby.app/OldEmby"
+          ldid -e "Payload/OldEmby.app/OldEmby" | head -10 || true
+
+          VERSION=$(grep -m1 "^Version:" control | awk '{print $2}')
+          COMMIT=$(git rev-parse --short HEAD)
+          IPA_NAME="OldEmby-${VERSION}-${COMMIT}-armv7.ipa"
+          rm -f OldEmby-armv7.ipa
+          zip -r "$IPA_NAME" Payload >/dev/null
+          cp "$IPA_NAME" OldEmby-armv7.ipa
+          echo "IPA created:"
+          ls -lh *.ipa
 
       - name: Upload Artifact (IPA + deb)
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: OldEmby-${{ github.sha }}-armv7
           path: |
             *.ipa
             packages/*.deb
-            .theos/obj/**/OldEmby.app
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
       - name: Build summary
@@ -262,6 +250,7 @@ jobs:
           echo "### OldEmby Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: $(git rev-parse --short HEAD 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "- Build type: ${{ inputs.build_type }}" >> $GITHUB_STEP_SUMMARY
           echo "- SDKs: $(ls -1 $THEOS/sdks/*.sdk 2>/dev/null | xargs -n1 basename | tr '\n' ',' || echo 'none')" >> $GITHUB_STEP_SUMMARY
           echo "- Artifacts: $(ls -1 *.ipa 2>/dev/null | tr '\n' ',' || echo 'none') $(ls -1 packages/*.deb 2>/dev/null | tr '\n' ',' || echo '')" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

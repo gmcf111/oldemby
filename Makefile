@@ -1,7 +1,6 @@
 export ARCHS = armv7
 export TARGET = iphone:clang:9.3:6.0
 export TARGET_IPHONEOS_DEPLOYMENT_VERSION = 6.0
-export THEOS_PACKAGE_SCHEME = rootless
 
 include $(THEOS)/makefiles/common.mk
 
@@ -34,24 +33,15 @@ OldEmby_CFLAGS = -fobjc-arc -mios-version-min=6.0 -Wno-deprecated-declarations -
 OldEmby_LDFLAGS = -Wl,-segalign,4000
 OldEmby_CODESIGN_FLAGS = -Sentitlements.plist
 
-# Info.plist additions via Theos
-OldEmby_PLIST_FILES = Resources/Info.plist
+# Info.plist is picked up automatically: Theos copies the Resources/ dir into
+# the .app and moves Resources/Info.plist to the bundle root.
+# OldEmby_PLIST_FILES was never a Theos variable - removed.
 
 include $(THEOS_MAKE_PATH)/application.mk
 
-# Post-build: create IPA structure for non-Cydia distribution
-after-package::
-	@echo "==> Packaging IPA..."
-	@rm -rf Payload
-	@mkdir -p Payload
-	@cp -R $(THEOS_OBJ_DIR)/OldEmby.app Payload/ 2>/dev/null || cp -R .theos/obj/iphoneos/*/OldEmby.app Payload/ 2>/dev/null || true
-	@if [ -d Payload/OldEmby.app ]; then \
-		echo "Found app bundle, ldid signing..."; \
-		ldid -S entitlements.plist Payload/OldEmby.app/OldEmby 2>/dev/null || ldid -Sentitlements.plist Payload/OldEmby.app/OldEmby 2>/dev/null || true; \
-		zip -r OldEmby-$(THEOS_PACKAGE_BASE_VERSION)_armv7.ipa Payload > /dev/null; \
-		echo "IPA created: OldEmby-$(THEOS_PACKAGE_BASE_VERSION)_armv7.ipa"; \
-		ls -lh *.ipa 2>/dev/null || true; \
-	fi
-
+# IPA assembly lives in .github/workflows/build.yml ("Assemble IPA" step),
+# which verifies the binary is a real Mach-O before packaging. Building the
+# IPA here duplicated that (with a broken ldid -S syntax) and let hollow
+# builds pass silently.
 after-clean::
 	rm -rf Payload *.ipa .theos packages
