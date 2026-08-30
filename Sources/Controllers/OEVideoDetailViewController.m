@@ -1,5 +1,6 @@
 #import "OEVideoDetailViewController.h"
 #import "Models/OEEmbyItem.h"
+#import "Models/OETranscodeSettings.h"
 #import "Services/OEEmbyAPIClient.h"
 #import "Services/OEImageCache.h"
 #import <MediaPlayer/MediaPlayer.h>
@@ -120,7 +121,7 @@
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-- (NSUInteger)supportedInterfaceOrientations {
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
     return UIInterfaceOrientationMaskPortrait;
 }
 
