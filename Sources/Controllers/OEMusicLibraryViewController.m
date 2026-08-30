@@ -8,25 +8,36 @@
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) NSArray *items;
 @property (nonatomic, strong) UISegmentedControl *seg;
+@property (nonatomic, copy) NSString *parentId;   // nil = root music library
+@property (nonatomic, copy) NSString *listTitle;
 @end
 
 @implementation OEMusicLibraryViewController
 
+- (instancetype)initWithParentId:(NSString *)parentId title:(NSString *)title {
+    if ((self = [super init])) {
+        _parentId = [parentId copy];
+        _listTitle = [title copy];
+    }
+    return self;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"音乐";
+    self.title = self.parentId ? (self.listTitle ?: @"歌曲") : @"音乐";
     self.view.backgroundColor = [UIColor whiteColor];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"刷新" style:UIBarButtonItemStylePlain target:self action:@selector(loadData)];
 
-    self.seg = [[UISegmentedControl alloc] initWithItems:@[@"歌曲", @"专辑", @"歌手"]];
-    self.seg.selectedSegmentIndex = 0;
-    [self.seg addTarget:self action:@selector(loadData) forControlEvents:UIControlEventValueChanged];
-    self.seg.frame = CGRectMake(10, 68, self.view.bounds.size.width-20, 30);
-    self.seg.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [self.view addSubview:self.seg];
+    if (!self.parentId) {
+        self.seg = [[UISegmentedControl alloc] initWithItems:@[@"歌曲", @"专辑", @"歌手"]];
+        self.seg.selectedSegmentIndex = 0;
+        [self.seg addTarget:self action:@selector(loadData) forControlEvents:UIControlEventValueChanged];
+        self.seg.frame = CGRectMake(10, 68, self.view.bounds.size.width-20, 30);
+        self.seg.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [self.view addSubview:self.seg];
+    }
 
-    CGFloat navH = 44+20;
-    self.tableView = [[UITableView alloc] initWithFrame:CGRectMake(0, navH+40, self.view.bounds.size.width, self.view.bounds.size.height - navH - 40 - 49) style:UITableViewStylePlain];
+    self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
@@ -34,27 +45,39 @@
     [self.view addSubview:self.tableView];
 
     [self loadData];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(loadData) name:@"OEDidLoginNotification" object:nil];
+    if (!self.parentId) {
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(loadData) name:@"OEDidLoginNotification" object:nil];
+    }
 }
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGFloat navH = self.navigationController.navigationBar.frame.size.height + 20;
-    self.seg.frame = CGRectMake(10, navH+4, self.view.bounds.size.width-20, 30);
-    self.tableView.frame = CGRectMake(0, navH+40, self.view.bounds.size.width, self.view.bounds.size.height - navH - 40 - self.tabBarController.tabBar.frame.size.height);
+    CGFloat tabH = self.tabBarController.tabBar.frame.size.height;
+    if (self.parentId) {
+        self.tableView.frame = CGRectMake(0, navH, self.view.bounds.size.width, self.view.bounds.size.height - navH - tabH);
+    } else {
+        self.seg.frame = CGRectMake(10, navH+4, self.view.bounds.size.width-20, 30);
+        self.tableView.frame = CGRectMake(0, navH+40, self.view.bounds.size.width, self.view.bounds.size.height - navH - 40 - tabH);
+    }
 }
 
 - (void)loadData {
     NSString *types = nil;
-    switch (self.seg.selectedSegmentIndex) {
-        case 0: types = @"Audio"; break;
-        case 1: types = @"MusicAlbum"; break;
-        case 2: types = @"MusicArtist"; break;
-        default: types = @"Audio"; break;
+    if (self.parentId) {
+        types = @"Audio"; // drill-down: songs of this album/artist
+    } else {
+        switch (self.seg.selectedSegmentIndex) {
+            case 0: types = @"Audio"; break;
+            case 1: types = @"MusicAlbum"; break;
+            case 2: types = @"MusicArtist"; break;
+            default: types = @"Audio"; break;
+        }
     }
+    NSString *oldTitle = self.title;
     self.title = @"加载中...";
-    [[OEEmbyAPIClient sharedClient] fetchItemsInParent:nil itemTypes:types startIndex:0 limit:50 completion:^(id result, NSError *error){
-        self.title = @"音乐";
+    [[OEEmbyAPIClient sharedClient] fetchItemsInParent:self.parentId itemTypes:types startIndex:0 limit:200 completion:^(id result, NSError *error){
+        self.title = oldTitle;
         if (error) {
             UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"加载失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
             [av show];
@@ -82,7 +105,6 @@
     OEItemCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) cell = [[OEItemCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
     OEEmbyItem *it = self.items[indexPath.row];
-    // Override row height layout: reuse same cell but shorter
     [cell configureWithItem:it];
     // Show album/artist for audio
     if (it.itemType == OEEmbyItemTypeAudio) {
@@ -92,16 +114,15 @@
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
     OEEmbyItem *it = self.items[indexPath.row];
     if (it.itemType == OEEmbyItemTypeAudio) {
         OEMusicPlayerViewController *vc = [[OEMusicPlayerViewController alloc] initWithItem:it playlist:self.items];
         [self.navigationController pushViewController:vc animated:YES];
     } else {
-        // For album/artist, drill down: fetch songs in that parent
-        // Simple: push new library with parentId
-        // Reuse self logic by setting parent and reloading? Instead push detail list
-        UIAlertView *av = [[UIAlertView alloc] initWithTitle:it.name message:@"请在 Emby 服务器中浏览该专辑/歌手包含的歌曲 (下一版支持层级浏览)" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
-        [av show];
+        // Album/Artist: drill down into its songs
+        OEMusicLibraryViewController *vc = [[OEMusicLibraryViewController alloc] initWithParentId:it.itemId title:it.name];
+        [self.navigationController pushViewController:vc animated:YES];
     }
 }
 

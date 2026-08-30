@@ -51,10 +51,18 @@
         // bitrate custom input via alertViewStylePlainTextInput (iOS5+)
         UITextField *tf = [alertView textFieldAtIndex:0];
         NSInteger v = [tf.text integerValue];
-        if (v >= 500 && v <= 20000) {
-            if (alertView.tag==2000) self.settings.maxVideoBitrate = v*1000;
-            else self.settings.maxAudioBitrate = v*1000;
-            [self.table reloadData];
+        if (alertView.tag==2000) {
+            // video bitrate: 500-20000 kbps
+            if (v >= 500 && v <= 20000) {
+                self.settings.maxVideoBitrate = v*1000;
+                [self.table reloadData];
+            }
+        } else {
+            // audio bitrate: 64-512 kbps
+            if (v >= 64 && v <= 512) {
+                self.settings.maxAudioBitrate = v*1000;
+                [self.table reloadData];
+            }
         }
     }
 }

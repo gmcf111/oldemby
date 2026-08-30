@@ -3,6 +3,7 @@
 #import "Services/OEEmbyAPIClient.h"
 #import "Models/OEEmbyItem.h"
 #import "Controllers/OEVideoDetailViewController.h"
+#import "Controllers/OEEpisodeListViewController.h"
 #import "Controllers/OELoginViewController.h"
 
 @interface OELibraryViewController ()
@@ -111,7 +112,13 @@
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
     OEEmbyItem *it = self.items[indexPath.row];
+    if (it.itemType == OEEmbyItemTypeSeries) {
+        OEEpisodeListViewController *vc = [[OEEpisodeListViewController alloc] initWithSeries:it];
+        [self.navigationController pushViewController:vc animated:YES];
+        return;
+    }
     OEVideoDetailViewController *vc = [[OEVideoDetailViewController alloc] initWithItem:it];
     [self.navigationController pushViewController:vc animated:YES];
 }

@@ -18,6 +18,10 @@
     }
     NSNumber *ticks = [dict objectForKey:@"RunTimeTicks"];
     if ([ticks isKindOfClass:[NSNumber class]]) it.runTimeTicks = [ticks longLongValue];
+    NSNumber *sn = [dict objectForKey:@"ParentIndexNumber"];
+    if ([sn isKindOfClass:[NSNumber class]]) it.seasonNumber = [sn integerValue];
+    NSNumber *en = [dict objectForKey:@"IndexNumber"];
+    if ([en isKindOfClass:[NSNumber class]]) it.episodeNumber = [en integerValue];
     return it;
 }
 

@@ -22,6 +22,8 @@ typedef NS_ENUM(NSInteger, OEEmbyItemType) {
 @property (nonatomic, copy) NSString *overview;
 @property (nonatomic, copy) NSString *album;
 @property (nonatomic, copy) NSString *artist;
+@property (nonatomic, assign) NSInteger seasonNumber;  // ParentIndexNumber (episodes)
+@property (nonatomic, assign) NSInteger episodeNumber; // IndexNumber
 
 + (instancetype)itemWithDictionary:(NSDictionary *)dict;
 + (OEEmbyItemType)typeFromString:(NSString *)s;
