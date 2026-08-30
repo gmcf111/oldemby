@@ -44,6 +44,7 @@
     if (alertView.tag==1001 && buttonIndex==1) {
         [[OEEmbyAPIClient sharedClient] logout];
         [self.table reloadData];
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"OEDidLogoutNotification" object:nil];
         UIAlertView *a2 = [[UIAlertView alloc] initWithTitle:@"已退出" message:@"请到 视频 页重新登录" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
         [a2 show];
     }
@@ -56,12 +57,18 @@
             if (v >= 500 && v <= 20000) {
                 self.settings.maxVideoBitrate = v*1000;
                 [self.table reloadData];
+            } else {
+                UIAlertView *err = [[UIAlertView alloc] initWithTitle:@"输入无效" message:@"视频码率范围需在 500 到 20000 kbps 之间" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
+                [err show];
             }
         } else {
             // audio bitrate: 64-512 kbps
             if (v >= 64 && v <= 512) {
                 self.settings.maxAudioBitrate = v*1000;
                 [self.table reloadData];
+            } else {
+                UIAlertView *err = [[UIAlertView alloc] initWithTitle:@"输入无效" message:@"音频码率范围需在 64 到 512 kbps 之间" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
+                [err show];
             }
         }
     }
@@ -92,8 +99,11 @@
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:ID];
     cell.accessoryType = UITableViewCellAccessoryNone;
+    cell.accessoryView = nil;
+    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     cell.textLabel.font = [UIFont systemFontOfSize:14];
     cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
+    cell.detailTextLabel.text = nil;
 
     if (indexPath.section==0) {
         if (indexPath.row==0) { cell.textLabel.text=@"480p (720x480)"; cell.accessoryType = (self.settings.resolution==OEResolution480p)?UITableViewCellAccessoryCheckmark:UITableViewCellAccessoryNone; }

@@ -3,10 +3,26 @@
 #import "Models/OETranscodeSettings.h"
 #import "Services/OETranscodeBuilder.h"
 #import <UIKit/UIKit.h>
+#import <CoreFoundation/CoreFoundation.h>
 
-@interface OEEmbyAPIClient () <NSURLConnectionDataDelegate>
-@property (nonatomic, strong) NSMutableDictionary *pendingConnections;
+@interface OEEmbyAPIClient ()
 @end
+
+// iOS 6 has no modern URL query-item encoder.  Escape every character that
+// can change query parsing (notably +, &, =, / and %) while retaining the
+// unreserved URI characters.
+static NSString *OEEncodeQueryComponent(NSString *value) {
+    if (!value) return @"";
+    CFStringRef escaped = CFURLCreateStringByAddingPercentEscapes(NULL,
+                                                                  (__bridge CFStringRef)value,
+                                                                  NULL,
+                                                                  CFSTR(":/?#[]@!$&'()*+,;=%"),
+                                                                  kCFStringEncodingUTF8);
+    if (!escaped) return @"";
+    NSString *result = [(__bridge NSString *)escaped copy];
+    CFRelease(escaped);
+    return result;
+}
 
 @implementation OEEmbyAPIClient
 
@@ -19,7 +35,6 @@
 
 - (instancetype)init {
     if ((self = [super init])) {
-        _pendingConnections = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -56,8 +71,8 @@
             NSString *k = [key description];
             NSString *v = [obj description];
             // Simple percent escape (iOS6 compatible)
-            NSString *ek = [k stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-            NSString *ev = [v stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+            NSString *ek = OEEncodeQueryComponent(k);
+            NSString *ev = OEEncodeQueryComponent(v);
             [parts addObject:[NSString stringWithFormat:@"%@=%@", ek, ev]];
         }];
         full = [full stringByAppendingFormat:@"?%@", [parts componentsJoinedByString:@"&"]];
@@ -109,17 +124,12 @@
 #pragma mark - Auth
 
 - (void)authenticateWithHost:(NSString *)host username:(NSString *)user password:(NSString *)pass completion:(OEAPICompletion)completion {
-    // Save host first
     OEServerConfig *cfg = [OEServerConfig sharedConfig];
-    cfg.host = host;
     // Emby auth: POST /Users/AuthenticateByName
     NSDictionary *body = @{@"Username": user ?: @"", @"Pw": pass ?: @""};
-    // Need to bypass auth headers for this call (no token yet) - still send device header
-    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/Users/AuthenticateByName", [host stringByReplacingOccurrencesOfString:@"/$" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, host.length)]]];
-    // Ensure base URL construction via helper would double-add host, so build manually
     NSString *base = host;
     while ([base hasSuffix:@"/"] && base.length>1) base=[base substringToIndex:base.length-1];
-    url = [NSURL URLWithString:[base stringByAppendingString:@"/Users/AuthenticateByName"]];
+    NSURL *url = [NSURL URLWithString:[base stringByAppendingString:@"/Users/AuthenticateByName"]];
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
     req.HTTPMethod = @"POST";
     // Minimal auth header without token
@@ -133,15 +143,24 @@
     [self sendRequest:req completion:^(id result, NSError *error){
         if (error) { if (completion) completion(nil, error); return; }
         // result contains User { Id } and AccessToken
-        NSString *token = result[@"AccessToken"];
-        NSDictionary *userDict = result[@"User"];
-        NSString *uid = userDict[@"Id"] ?: result[@"Id"];
-        if (token && uid) {
+        NSString *token = [result isKindOfClass:[NSDictionary class]] ? result[@"AccessToken"] : nil;
+        NSDictionary *userDict = [result isKindOfClass:[NSDictionary class]] ? result[@"User"] : nil;
+        NSString *uid = [userDict isKindOfClass:[NSDictionary class]] ? userDict[@"Id"] : nil;
+        if (![uid isKindOfClass:[NSString class]] || !uid.length) {
+            id fallbackId = [result isKindOfClass:[NSDictionary class]] ? result[@"Id"] : nil;
+            uid = [fallbackId isKindOfClass:[NSString class]] ? fallbackId : nil;
+        }
+        if ([token isKindOfClass:[NSString class]] && token.length && [uid isKindOfClass:[NSString class]] && uid.length) {
+            cfg.host = host;
             cfg.accessToken = token;
             cfg.userId = uid;
             cfg.username = user;
             // host already set
             [cfg saveToDefaults];
+        }
+        if (![token isKindOfClass:[NSString class]] || !token.length || ![uid isKindOfClass:[NSString class]] || !uid.length) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-3 userInfo:@{NSLocalizedDescriptionKey:@"Authentication response missing token or user ID"}]);
+            return;
         }
         if (completion) completion(result, nil);
     }];
@@ -153,22 +172,40 @@
 
 #pragma mark - Browsing
 
+// Shared parsing: extract Items array and build OEEmbyItem list (guards against non-dict responses)
+- (void)parseItemsFromResult:(id)result completion:(OEAPICompletion)completion {
+    NSArray *items = nil;
+    if ([result isKindOfClass:[NSDictionary class]]) {
+        id candidate = result[@"Items"];
+        if ([candidate isKindOfClass:[NSArray class]]) items = candidate;
+    }
+    else if ([result isKindOfClass:[NSArray class]]) items = result;
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSDictionary *d in items) {
+        if ([d isKindOfClass:[NSDictionary class]]) [out addObject:[OEEmbyItem itemWithDictionary:d]];
+    }
+    if (completion) completion(out, nil);
+}
+
 - (void)fetchViewsWithCompletion:(OEAPICompletion)completion {
     OEServerConfig *c = [OEServerConfig sharedConfig];
     if (!c.userId) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }
     NSString *path = [NSString stringWithFormat:@"/Users/%@/Views", c.userId];
     [self GET:path params:nil completion:^(id result, NSError *error){
         if (error) { if (completion) completion(nil, error); return; }
-        NSArray *items = result[@"Items"] ?: result;
-        NSMutableArray *out = [NSMutableArray array];
-        for (NSDictionary *d in items) {
-            if ([d isKindOfClass:[NSDictionary class]]) [out addObject:[OEEmbyItem itemWithDictionary:d]];
-        }
-        if (completion) completion(out, nil);
+        [self parseItemsFromResult:result completion:completion];
     }];
 }
 
 - (void)fetchItemsInParent:(NSString *)parentId itemTypes:(NSString *)types startIndex:(NSInteger)start limit:(NSInteger)limit completion:(OEAPICompletion)completion {
+    [self fetchItemsInParent:parentId itemTypes:types startIndex:start limit:limit sortBy:@"SortName" completion:completion];
+}
+
+- (void)fetchItemsInParent:(NSString *)parentId itemTypes:(NSString *)types startIndex:(NSInteger)start limit:(NSInteger)limit sortBy:(NSString *)sortBy completion:(OEAPICompletion)completion {
+    [self fetchItemsInParent:parentId itemTypes:types startIndex:start limit:limit sortBy:sortBy recursive:YES completion:completion];
+}
+
+- (void)fetchItemsInParent:(NSString *)parentId itemTypes:(NSString *)types startIndex:(NSInteger)start limit:(NSInteger)limit sortBy:(NSString *)sortBy recursive:(BOOL)recursive completion:(OEAPICompletion)completion {
     OEServerConfig *c = [OEServerConfig sharedConfig];
     if (!c.userId) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }
     NSString *path = [NSString stringWithFormat:@"/Users/%@/Items", c.userId];
@@ -179,17 +216,32 @@
     p[@"ImageTypeLimit"] = @"1";
     p[@"StartIndex"] = @(start).stringValue;
     p[@"Limit"] = @(limit).stringValue;
-    p[@"SortBy"] = @"SortName";
+    p[@"SortBy"] = sortBy.length ? sortBy : @"SortName";
+    p[@"SortOrder"] = @"Ascending";
+    p[@"Recursive"] = recursive ? @"true" : @"false";
+    [self GET:path params:p completion:^(id result, NSError *error){
+        if (error) { if (completion) completion(nil, error); return; }
+        [self parseItemsFromResult:result completion:completion];
+    }];
+}
+
+- (void)fetchSongsForArtist:(NSString *)artistId startIndex:(NSInteger)start limit:(NSInteger)limit completion:(OEAPICompletion)completion {
+    OEServerConfig *c = [OEServerConfig sharedConfig];
+    if (!c.userId) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }
+    NSString *path = [NSString stringWithFormat:@"/Users/%@/Items", c.userId];
+    NSMutableDictionary *p = [NSMutableDictionary dictionary];
+    p[@"IncludeItemTypes"] = @"Audio";
+    p[@"ArtistIds"] = artistId ?: @"";
+    p[@"Fields"] = @"PrimaryImageAspectRatio,Overview,RunTimeTicks";
+    p[@"ImageTypeLimit"] = @"1";
+    p[@"StartIndex"] = @(start).stringValue;
+    p[@"Limit"] = @(limit).stringValue;
+    p[@"SortBy"] = @"Album,ParentIndexNumber,IndexNumber";
     p[@"SortOrder"] = @"Ascending";
     p[@"Recursive"] = @"true";
     [self GET:path params:p completion:^(id result, NSError *error){
         if (error) { if (completion) completion(nil, error); return; }
-        NSArray *items = result[@"Items"];
-        NSMutableArray *out = [NSMutableArray array];
-        for (NSDictionary *d in items) {
-            if ([d isKindOfClass:[NSDictionary class]]) [out addObject:[OEEmbyItem itemWithDictionary:d]];
-        }
-        if (completion) completion(out, nil);
+        [self parseItemsFromResult:result completion:completion];
     }];
 }
 
@@ -206,32 +258,61 @@
 - (void)fetchStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion {
     [self fetchPlaybackInfoForItem:itemId isAudio:isAudio completion:^(id result, NSError *error){
         if (error) { if (completion) completion(nil, error); return; }
+        if (![result isKindOfClass:[NSDictionary class]]) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"Invalid PlaybackInfo response"}]);
+            return;
+        }
         NSString *msId = nil;
-        NSString *url = [OETranscodeBuilder streamURLFromPlaybackInfoResponse:result host:[self baseURL] mediaSourceId:&msId];
+        NSString *url = [OETranscodeBuilder streamURLFromPlaybackInfoResponse:result itemId:itemId isAudio:isAudio host:[self baseURL] mediaSourceId:&msId];
         if (!url) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No stream URL in PlaybackInfo"}]); return; }
         // Append transcode query if needed and URL not already contains it
         OETranscodeSettings *s = [OETranscodeSettings sharedSettings];
-        if (!s.directPlay && [url rangeOfString:@"VideoCodec="].location == NSNotFound && [url rangeOfString:@"AudioCodec="].location == NSNotFound) {
+        if (!s.directPlay && [url rangeOfString:@"VideoCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound && [url rangeOfString:@"AudioCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound) {
+            // A server may return a generic URL containing Static=true even
+            // when the profile requested transcoding.  Replace that flag
+            // before adding codec parameters instead of sending contradictory
+            // duplicate query keys.
+            url = [url stringByReplacingOccurrencesOfString:@"Static=true" withString:@"Static=false"];
+            url = [url stringByReplacingOccurrencesOfString:@"static=true" withString:@"static=false"];
             NSString *qs = [OETranscodeBuilder transcodeQueryStringForSettings:s isAudio:isAudio];
             NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
             // Emby stream endpoint also needs api_key? For direct stream, token via header is ok, but append if needed
             NSString *token = [OEServerConfig sharedConfig].accessToken;
-            NSString *extra = [NSString stringWithFormat:@"%@%@&api_key=%@", sep, qs, token ?: @""];
+            NSString *escapedToken = OEEncodeQueryComponent(token);
+            NSString *extra = [NSString stringWithFormat:@"%@%@&api_key=%@", sep, qs, escapedToken ?: @""];
             url = [url stringByAppendingString:extra];
         } else if (s.directPlay) {
+            // In direct play, ensure Static=true if a fallback or media source stream URL was used
+            url = [url stringByReplacingOccurrencesOfString:@"Static=false" withString:@"Static=true"];
+            url = [url stringByReplacingOccurrencesOfString:@"static=false" withString:@"static=true"];
             // Ensure api_key for direct
-            if ([url rangeOfString:@"api_key"].location == NSNotFound) {
+            if ([url rangeOfString:@"api_key" options:NSCaseInsensitiveSearch].location == NSNotFound) {
                 NSString *token = [OEServerConfig sharedConfig].accessToken;
+                NSString *escapedToken = OEEncodeQueryComponent(token);
                 NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
-                url = [url stringByAppendingFormat:@"%@api_key=%@", sep, token ?: @""];
+                url = [url stringByAppendingFormat:@"%@api_key=%@", sep, escapedToken ?: @""];
             }
+        }
+        // Some Emby versions omit the token from an explicit
+        // TranscodingUrl.  Movie/AVPlayer cannot send our custom headers, so
+        // ensure every returned playback URL is independently authenticated.
+        NSString *token = [OEServerConfig sharedConfig].accessToken;
+        if (token.length && [url rangeOfString:@"api_key=" options:NSCaseInsensitiveSearch].location == NSNotFound) {
+            NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
+            url = [url stringByAppendingFormat:@"%@api_key=%@", sep, OEEncodeQueryComponent(token)];
         }
         if (completion) completion(url, nil);
     }];
 }
 
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width {
-    return [item primaryImageURLWithHost:[self baseURL] maxWidth:width];
+    NSString *url = [item primaryImageURLWithHost:[self baseURL] maxWidth:width];
+    NSString *token = [OEServerConfig sharedConfig].accessToken;
+    if (!url.length || !token.length) return url;
+    // ImageCache uses a plain NSURLConnection, so authenticate image
+    // requests through Emby's api_key query parameter.
+    NSString *escaped = OEEncodeQueryComponent(token);
+    return [url stringByAppendingFormat:@"&api_key=%@", escaped ?: @""];
 }
 
 @end

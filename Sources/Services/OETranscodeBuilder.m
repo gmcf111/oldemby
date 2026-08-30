@@ -4,13 +4,17 @@
 
 + (NSDictionary *)deviceProfileForSettings:(OETranscodeSettings *)s isAudio:(BOOL)isAudio {
     if (s.directPlay) {
-        // Empty profile -> allow direct play if source is already H264/AAC compatible
+        // Advertise the media type being requested.  A video-only profile
+        // makes PlaybackInfo reject otherwise playable music sources.
+        NSDictionary *directProfile = isAudio
+            ? @{ @"Container": @"mp3,aac,m4a,wav", @"Type": @"Audio" }
+            : @{ @"Container": @"mp4,mkv,avi,mov", @"Type": @"Video" };
         return @{
             @"Name": @"OldEmby Direct",
             @"MaxStaticBitrate": @(100000000),
             @"MusicStreamingTranscodingBitrate": @(s.maxAudioBitrate),
             @"MaxStreamingBitrate": @(s.maxVideoBitrate),
-            @"DirectPlayProfiles": @[@{@"Container": @"mp4,mkv,avi,mov", @"Type": @"Video"}],
+            @"DirectPlayProfiles": @[directProfile],
             @"TranscodingProfiles": @[],
             @"CodecProfiles": @[],
             @"ContainerProfiles": @[],
@@ -28,7 +32,9 @@
             @"Name": @"OldEmby Audio",
             @"MaxStaticBitrate": @(100000000),
             @"MusicStreamingTranscodingBitrate": @(abr),
-            @"DirectPlayProfiles": @[@{@"Container": @"mp3,aac,flac,ogg,wav", @"Type": @"Audio"}],
+            // Disable direct play in transcode mode so the requested audio
+            // bitrate is actually applied even for AAC/MP3 source files.
+            @"DirectPlayProfiles": @[],
             @"TranscodingProfiles": @[
                 @{@"Container": @"mp3", @"Type": @"Audio", @"AudioCodec": @"mp3", @"Context": @"Streaming", @"Protocol": @"http"},
                 @{@"Container": @"aac", @"Type": @"Audio", @"AudioCodec": @"aac", @"Context": @"Streaming", @"Protocol": @"http"}
@@ -89,15 +95,17 @@
     if (userId) body[@"UserId"] = userId;
     if (itemId) body[@"ItemId"] = itemId;
     body[@"DeviceProfile"] = profile;
-    body[@"MediaSourceId"] = itemId ?: @"";
-    body[@"AudioStreamIndex"] = @(1);
+    // MediaSourceId is the server's source identifier, not the item ID.  Do
+    // not send a guessed value on the initial PlaybackInfo request.
     // Emby expects these top-level for legacy 3.x
     body[@"MaxStreamingBitrate"] = @(s.directPlay ? 100000000 : s.maxVideoBitrate);
     body[@"MusicStreamingTranscodingBitrate"] = @(s.maxAudioBitrate);
     // StartTimeTicks = 0 for fresh playback
     body[@"StartTimeTicks"] = @(0);
-    // For video, request HLS if transcoding, else static
-    if (!isAudio && !s.directPlay) {
+    // In transcode mode disable both direct-play and direct-stream for audio
+    // as well as video; otherwise Emby may legally return the original file
+    // and ignore the requested bitrate.
+    if (!s.directPlay) {
         body[@"EnableDirectPlay"] = @NO;
         body[@"EnableDirectStream"] = @NO;
         body[@"EnableTranscoding"] = @YES;
@@ -114,7 +122,7 @@
 + (NSString *)transcodeQueryStringForSettings:(OETranscodeSettings *)s isAudio:(BOOL)isAudio {
     if (s.directPlay) return @"Static=true";
     if (isAudio) {
-        return [NSString stringWithFormat:@"AudioCodec=aac&MaxAudioBitrate=%ld&Container=mp3", (long)s.maxAudioBitrate];
+        return [NSString stringWithFormat:@"AudioCodec=aac&MaxAudioBitrate=%ld&Container=aac&Static=false", (long)s.maxAudioBitrate];
     }
     NSInteger w = [s widthForResolution];
     NSInteger h = [s heightForResolution];
@@ -122,23 +130,59 @@
             (long)w, (long)h, (long)s.maxVideoBitrate, (long)s.maxVideoBitrate, (long)s.maxAudioBitrate];
 }
 
-+ (NSString *)streamURLFromPlaybackInfoResponse:(NSDictionary *)response host:(NSString *)host mediaSourceId:(NSString **)outId {
++ (NSString *)streamURLFromPlaybackInfoResponse:(NSDictionary *)response itemId:(NSString *)itemId isAudio:(BOOL)isAudio host:(NSString *)host mediaSourceId:(NSString **)outId {
     NSArray *sources = response[@"MediaSources"];
     if (![sources isKindOfClass:[NSArray class]] || sources.count == 0) return nil;
-    NSDictionary *src = sources[0];
-    NSString *msId = src[@"Id"] ?: src[@"ETag"] ?: @"";
-    if (outId) *outId = msId;
-    // Prefer TranscodingUrl, else DirectStreamUrl
-    NSString *url = src[@"TranscodingUrl"] ?: src[@"DirectStreamUrl"];
+    NSDictionary *src = nil;
+    NSString *url = nil;
+    // Prefer a source with an explicit transcoding URL, then any direct URL.
+    // PlaybackInfo may contain multiple versions/tracks and the first entry
+    // is not guaranteed to be playable for this device profile.
+    for (NSDictionary *candidate in sources) {
+        if (![candidate isKindOfClass:[NSDictionary class]]) continue;
+        id candidateURL = candidate[@"TranscodingUrl"];
+        if ([candidateURL isKindOfClass:[NSString class]] && [candidateURL length]) {
+            src = candidate;
+            url = candidateURL;
+            break;
+        }
+    }
     if (!url) {
-        // Emby 4.x may return MediaSources with SupportsDirectStream etc, but no URL -> build via /Videos/{Id}/stream
-        NSString *itemId = response[@"ItemId"] ?: src[@"Id"] ?: @"";
-        // Caller will append query string via builder
-        url = [NSString stringWithFormat:@"/Videos/%@/stream?MediaSourceId=%@&Static=false", itemId, msId];
+        for (NSDictionary *candidate in sources) {
+            if (![candidate isKindOfClass:[NSDictionary class]]) continue;
+            id candidateURL = candidate[@"DirectStreamUrl"];
+            if ([candidateURL isKindOfClass:[NSString class]] && [candidateURL length]) {
+                src = candidate;
+                url = candidateURL;
+                break;
+            }
+        }
+    }
+    // If no source includes a URL, retain the first valid source for the
+    // fallback /{Audio,Videos}/{item}/stream endpoint.
+    if (!src) {
+        for (NSDictionary *candidate in sources) {
+            if ([candidate isKindOfClass:[NSDictionary class]]) { src = candidate; break; }
+        }
+    }
+    if (!src) return nil;
+    NSString *msId = [src[@"Id"] isKindOfClass:[NSString class]] ? src[@"Id"] : ([src[@"ETag"] isKindOfClass:[NSString class]] ? src[@"ETag"] : @"");
+    if (outId) *outId = msId;
+    if (!url.length) {
+        // Emby 4.x may return MediaSources with SupportsDirectStream etc,
+        // but no URL -> build the appropriate audio/video stream endpoint.
+        // The media-source ID cannot be used as the video item ID.  Use the
+        // original item ID supplied by the caller for this fallback URL.
+        NSString *resolvedItemId = itemId ?: response[@"ItemId"] ?: @"";
+        if (!resolvedItemId.length) return nil;
+        NSString *resource = isAudio ? @"Audio" : @"Videos";
+        NSString *staticFlag = s.directPlay ? @"Static=true" : @"Static=false";
+        url = [NSString stringWithFormat:@"/%@/%@/stream?MediaSourceId=%@&%@", resource, resolvedItemId, msId, staticFlag];
     }
     // Ensure absolute URL
     if ([url hasPrefix:@"http"]) return url;
     NSString *base = host;
+    if (!base.length) return nil;
     while ([base hasSuffix:@"/"] && base.length>1) base=[base substringToIndex:base.length-1];
     if (![url hasPrefix:@"/"]) url = [@"/" stringByAppendingString:url];
     return [base stringByAppendingString:url];

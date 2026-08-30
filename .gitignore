@@ -25,7 +25,5 @@ theos/sdks/
 *.pem
 *.mobileprovision
 
-# Prompt file keep but not needed for build
-# opencode-prompt-legacy-emby-player.md
-
-opencode-prompt-legacy-emby-player.md
+# Prompt files - local only, not needed for build, do not track
+提示词/

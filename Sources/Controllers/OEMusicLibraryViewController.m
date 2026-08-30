@@ -10,14 +10,21 @@
 @property (nonatomic, strong) UISegmentedControl *seg;
 @property (nonatomic, copy) NSString *parentId;   // nil = root music library
 @property (nonatomic, copy) NSString *listTitle;
+@property (nonatomic, assign) OEEmbyItemType parentItemType;
+@property (nonatomic, assign) NSUInteger loadGeneration;
+@property (nonatomic, assign) NSInteger pageStart;
+@property (nonatomic, assign) NSInteger pageSize;
+@property (nonatomic, assign) BOOL loadingPage;
+@property (nonatomic, assign) BOOL hasMorePages;
 @end
 
 @implementation OEMusicLibraryViewController
 
-- (instancetype)initWithParentId:(NSString *)parentId title:(NSString *)title {
+- (instancetype)initWithParentId:(NSString *)parentId title:(NSString *)title itemType:(OEEmbyItemType)itemType {
     if ((self = [super init])) {
         _parentId = [parentId copy];
         _listTitle = [title copy];
+        _parentItemType = itemType;
     }
     return self;
 }
@@ -43,10 +50,13 @@
     self.tableView.delegate = self;
     self.tableView.rowHeight = 60;
     [self.view addSubview:self.tableView];
+    self.pageSize = 200;
+    self.hasMorePages = YES;
 
     [self loadData];
     if (!self.parentId) {
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(loadData) name:@"OEDidLoginNotification" object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(loadData) name:@"OEDidLogoutNotification" object:nil];
     }
 }
 
@@ -63,6 +73,17 @@
 }
 
 - (void)loadData {
+    ++self.loadGeneration; // invalidate any in-flight page from the previous filter
+    self.pageStart = 0;
+    self.hasMorePages = YES;
+    self.items = @[];
+    [self loadPageAtStart:0 reset:YES];
+}
+
+- (void)loadPageAtStart:(NSInteger)start reset:(BOOL)reset {
+    if ((!reset && self.loadingPage) || (!reset && !self.hasMorePages)) return;
+    NSUInteger generation = ++self.loadGeneration;
+    self.loadingPage = YES;
     NSString *types = nil;
     if (self.parentId) {
         types = @"Audio"; // drill-down: songs of this album/artist
@@ -74,17 +95,25 @@
             default: types = @"Audio"; break;
         }
     }
-    NSString *oldTitle = self.title;
+    NSString *resetTitle = self.parentId ? (self.listTitle ?: @"歌曲") : @"音乐";
     self.title = @"加载中...";
-    [[OEEmbyAPIClient sharedClient] fetchItemsInParent:self.parentId itemTypes:types startIndex:0 limit:200 completion:^(id result, NSError *error){
-        self.title = oldTitle;
+    OEAPICompletion handler = ^(id result, NSError *error){
+        if (generation != self.loadGeneration) return;
+        self.loadingPage = NO;
+        self.title = resetTitle;
         if (error) {
-            UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"加载失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
-            [av show];
+            if (error.code != -1 || ![error.domain isEqualToString:@"OEEmbyAPI"]) {
+                UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"加载失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
+                [av show];
+            }
             return;
         }
-        self.items = result;
+        NSArray *page = [result isKindOfClass:[NSArray class]] ? result : @[];
+        self.items = reset ? page : [self.items arrayByAddingObjectsFromArray:page];
+        self.pageStart = start + page.count;
+        self.hasMorePages = (page.count == self.pageSize);
         [self.tableView reloadData];
+        [[self.tableView viewWithTag:998] removeFromSuperview];
         if (self.items.count==0) {
             UILabel *empty = [[UILabel alloc] initWithFrame:CGRectMake(0, 100, self.view.bounds.size.width, 40)];
             empty.text = @"暂无音乐，请检查音乐库";
@@ -92,10 +121,24 @@
             empty.textAlignment = NSTextAlignmentCenter;
             empty.textColor = [UIColor grayColor];
             [self.tableView addSubview:empty];
-        } else {
-            [[self.tableView viewWithTag:998] removeFromSuperview];
         }
-    }];
+    };
+    OEEmbyAPIClient *api = [OEEmbyAPIClient sharedClient];
+    if (self.parentId && self.parentItemType == OEEmbyItemTypeArtist) {
+        // Artists are virtual nodes: ParentId returns nothing, filter by ArtistIds instead
+        [api fetchSongsForArtist:self.parentId startIndex:start limit:self.pageSize completion:handler];
+    } else if (self.parentId) {
+        // Album: order by disc/track number, not alphabetically
+        [api fetchItemsInParent:self.parentId itemTypes:types startIndex:start limit:self.pageSize sortBy:@"ParentIndexNumber,IndexNumber" completion:handler];
+    } else {
+        [api fetchItemsInParent:nil itemTypes:types startIndex:start limit:self.pageSize sortBy:(self.seg.selectedSegmentIndex == 0 ? @"Album,ParentIndexNumber,IndexNumber" : @"SortName") completion:handler];
+    }
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.row == self.items.count - 1 && !self.loadingPage && self.hasMorePages) {
+        [self loadPageAtStart:self.pageStart reset:NO];
+    }
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.items.count; }
@@ -104,6 +147,7 @@
     static NSString *ID = @"MusicCell";
     OEItemCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) cell = [[OEItemCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
+    cell.compactLayout = YES; // rowHeight is 60 here
     OEEmbyItem *it = self.items[indexPath.row];
     [cell configureWithItem:it];
     // Show album/artist for audio
@@ -121,7 +165,7 @@
         [self.navigationController pushViewController:vc animated:YES];
     } else {
         // Album/Artist: drill down into its songs
-        OEMusicLibraryViewController *vc = [[OEMusicLibraryViewController alloc] initWithParentId:it.itemId title:it.name];
+        OEMusicLibraryViewController *vc = [[OEMusicLibraryViewController alloc] initWithParentId:it.itemId title:it.name itemType:it.itemType];
         [self.navigationController pushViewController:vc animated:YES];
     }
 }

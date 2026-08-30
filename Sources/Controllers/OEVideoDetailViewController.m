@@ -10,6 +10,7 @@
 @property (nonatomic, strong) UILabel *titleLabel;
 @property (nonatomic, strong) UILabel *overviewLabel;
 @property (nonatomic, strong) UIButton *playBtn;
+@property (nonatomic, strong) MPMoviePlayerViewController *activePlayerController;
 @end
 
 @implementation OEVideoDetailViewController
@@ -19,6 +20,14 @@
         _item = item;
     }
     return self;
+}
+
+- (NSString *)playButtonTitle {
+    OETranscodeSettings *s = [OETranscodeSettings sharedSettings];
+    if (s.directPlay) {
+        return @"播放 (直接播放)";
+    }
+    return [NSString stringWithFormat:@"播放 (转码 %@ H.264 %ldMbps)", [s resolutionString], (long)s.maxVideoBitrate / 1000000];
 }
 
 - (void)viewDidLoad {
@@ -46,7 +55,7 @@
 
     self.playBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     self.playBtn.frame = CGRectMake(20, 400, w-40, 46);
-    [self.playBtn setTitle:@"播放 (自动转码 720p H.264 4Mbps)" forState:UIControlStateNormal];
+    [self.playBtn setTitle:[self playButtonTitle] forState:UIControlStateNormal];
     self.playBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     self.playBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.47 blue:1.0 alpha:1];
     [self.playBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -61,12 +70,17 @@
     }];
 }
 
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self.playBtn setTitle:[self playButtonTitle] forState:UIControlStateNormal];
+}
+
 - (void)playTapped {
     [self.playBtn setTitle:@"正在获取播放地址..." forState:UIControlStateNormal];
     self.playBtn.enabled = NO;
     [[OEEmbyAPIClient sharedClient] fetchStreamURLForItem:self.item.itemId isAudio:NO completion:^(id result, NSError *error){
         self.playBtn.enabled = YES;
-        [self.playBtn setTitle:@"播放 (自动转码 720p H.264 4Mbps)" forState:UIControlStateNormal];
+        [self.playBtn setTitle:[self playButtonTitle] forState:UIControlStateNormal];
         if (error) {
             UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"播放失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
             [av show];
@@ -84,6 +98,7 @@
             [av show];
             return;
         }
+        self.activePlayerController = mp;
         // Configure
         mp.moviePlayer.movieSourceType = MPMovieSourceTypeStreaming;
         mp.moviePlayer.shouldAutoplay = YES;
@@ -95,7 +110,22 @@
 
 - (void)movieFinished:(NSNotification *)n {
     [[NSNotificationCenter defaultCenter] removeObserver:self name:MPMoviePlayerPlaybackDidFinishNotification object:nil];
-    [self dismissMoviePlayerViewControllerAnimated];
+    if (self.activePlayerController) {
+        [self dismissMoviePlayerViewControllerAnimated];
+        self.activePlayerController = nil;
+    }
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (NSUInteger)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskPortrait;
+}
+
+- (BOOL)shouldAutorotate {
+    return NO;
 }
 
 @end

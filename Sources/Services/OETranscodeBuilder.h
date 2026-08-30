@@ -18,7 +18,9 @@
 
 // Parse PlaybackInfo response to get MediaSource -> stream URL
 + (NSString *)streamURLFromPlaybackInfoResponse:(NSDictionary *)response
-                                         host:(NSString *)host
+                                         itemId:(NSString *)itemId
+                                        isAudio:(BOOL)isAudio
+                                           host:(NSString *)host
                                    mediaSourceId:(NSString **)outMediaSourceId;
 
 @end

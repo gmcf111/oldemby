@@ -2,6 +2,10 @@
 #import "Services/OEImageCache.h"
 #import "Services/OEEmbyAPIClient.h"
 
+@interface OEItemCell ()
+@property (nonatomic, copy) NSString *representedItemId;
+@end
+
 @implementation OEItemCell
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
@@ -30,12 +34,24 @@
     return self;
 }
 
+- (void)setCompactLayout:(BOOL)compactLayout {
+    _compactLayout = compactLayout;
+    _detailLabel.numberOfLines = compactLayout ? 1 : 2;
+    [self setNeedsLayout];
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat w = self.contentView.bounds.size.width;
-    _coverView.frame = CGRectMake(8, 6, 60, 90);
-    _titleLabel.frame = CGRectMake(76, 8, w - 84, 20);
-    _detailLabel.frame = CGRectMake(76, 32, w - 84, 48);
+    if (_compactLayout) {
+        _coverView.frame = CGRectMake(8, 6, 48, 48);
+        _titleLabel.frame = CGRectMake(64, 8, w - 72, 20);
+        _detailLabel.frame = CGRectMake(64, 30, w - 72, 22);
+    } else {
+        _coverView.frame = CGRectMake(8, 6, 60, 90);
+        _titleLabel.frame = CGRectMake(76, 8, w - 84, 20);
+        _detailLabel.frame = CGRectMake(76, 32, w - 84, 48);
+    }
 }
 
 - (void)prepareForReuse {
@@ -43,15 +59,18 @@
     self.coverView.image = nil;
     self.titleLabel.text = nil;
     self.detailLabel.text = nil;
+    self.representedItemId = nil;
 }
 
 - (void)configureWithItem:(OEEmbyItem *)item {
+    self.representedItemId = item.itemId;
     self.titleLabel.text = item.name ?: @"Untitled";
     self.detailLabel.text = [NSString stringWithFormat:@"%@  %@", item.type ?: @"", [item displayDuration]];
     NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:item width:120];
     [[OEImageCache sharedCache] loadImageFromURL:url placeholder:nil completion:^(UIImage *image){
-        // Ensure cell still showing same item (simple check via title)
-        if ([self.titleLabel.text isEqualToString:item.name]) {
+        // Names are not unique; compare the stable item ID to avoid stale
+        // asynchronous image responses being displayed in a reused cell.
+        if ([self.representedItemId isEqualToString:item.itemId]) {
             self.coverView.image = image;
         }
     }];

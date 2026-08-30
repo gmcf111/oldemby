@@ -1,6 +1,7 @@
 #import "OELoginViewController.h"
 #import "Services/OEEmbyAPIClient.h"
 #import "Models/OEServerConfig.h"
+#import "Constants.h"
 
 @interface OELoginViewController ()
 @property (nonatomic, strong) UITextField *hostField;
@@ -42,7 +43,7 @@
     [self.view addSubview:self.statusLabel];
 
     // Prefill host if saved
-    NSString *savedHost = [[NSUserDefaults standardUserDefaults] stringForKey:@"OEServerHost"];
+    NSString *savedHost = [[NSUserDefaults standardUserDefaults] stringForKey:kDefaultsServerHost];
     if (savedHost) self.hostField.text = savedHost;
 }
 

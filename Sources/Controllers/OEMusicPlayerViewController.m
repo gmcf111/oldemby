@@ -23,6 +23,8 @@
 @property (nonatomic, strong) AVPlayer *player; // iOS6+ AVPlayer supports streaming audio; fallback to AVAudioPlayer via NSURLConnection would be complex
 @property (nonatomic, strong) id timeObserver;
 @property (nonatomic, assign) BOOL isPlaying;
+@property (nonatomic, assign) BOOL isSeeking;
+@property (nonatomic, assign) NSUInteger loadGeneration;
 @end
 
 @implementation OEMusicPlayerViewController
@@ -62,8 +64,9 @@
     [self.view addSubview:self.artistLabel];
 
     self.progressSlider = [[UISlider alloc] initWithFrame:CGRectMake(20, 350, w-40, 20)];
+    [self.progressSlider addTarget:self action:@selector(sliderTouchDown) forControlEvents:UIControlEventTouchDown];
     [self.progressSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
-    [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside];
+    [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     [self.view addSubview:self.progressSlider];
 
     self.timeLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 370, w-40, 16)];
@@ -97,32 +100,43 @@
 
     // Remote control
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleRemote:) name:kNotificationPlaybackStateChanged object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleAudioInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
 
     [self loadCurrentItem];
 }
 
 - (void)loadCurrentItem {
+    NSUInteger generation = ++self.loadGeneration;
     OEEmbyItem *it = self.playlist[self.currentIndex];
     self.currentItem = it;
+    [self cleanupPlayer];
+    self.isPlaying = NO;
     self.titleLabel.text = it.name;
     self.artistLabel.text = it.artist ?: it.album ?: @"";
     self.timeLabel.text = @"正在获取...";
 
     NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:it width:400];
     [[OEImageCache sharedCache] loadImageFromURL:url placeholder:nil completion:^(UIImage *image){
+        if (generation != self.loadGeneration || self.currentItem != it) return;
         self.artworkView.image = image;
         [self updateNowPlayingInfo];
     }];
 
     // Fetch stream URL
     [[OEEmbyAPIClient sharedClient] fetchStreamURLForItem:it.itemId isAudio:YES completion:^(id result, NSError *error){
+        if (generation != self.loadGeneration || self.currentItem != it) return;
         if (error) {
             self.timeLabel.text = [NSString stringWithFormat:@"失败: %@", error.localizedDescription];
             return;
         }
         NSString *stream = (NSString *)result;
         NSLog(@"[OldEmby][Music] stream URL: %@", stream);
-        [self playURL:[NSURL URLWithString:stream]];
+        NSURL *streamURL = [stream isKindOfClass:[NSString class]] ? [NSURL URLWithString:stream] : nil;
+        if (!streamURL) {
+            self.timeLabel.text = @"Invalid stream URL";
+            return;
+        }
+        [self playURL:streamURL];
     }];
 }
 
@@ -154,7 +168,7 @@
 }
 
 - (void)updateProgress {
-    if (!self.player) return;
+    if (!self.player || self.isSeeking) return;
     CMTime cur = self.player.currentTime;
     CMTime dur = self.player.currentItem.duration;
     if (CMTIME_IS_INVALID(dur) || dur.value==0) return;
@@ -197,6 +211,20 @@
     else if (ev.subtype == UIEventSubtypeRemoteControlPreviousTrack) [self prevTapped];
 }
 
+- (void)handleAudioInterruption:(NSNotification *)n {
+    NSNumber *typeNum = n.userInfo[AVAudioSessionInterruptionTypeKey];
+    if (!typeNum) return;
+    NSUInteger type = [typeNum unsignedIntegerValue];
+    if (type == AVAudioSessionInterruptionTypeBegan) {
+        [self pause];
+    } else if (type == AVAudioSessionInterruptionTypeEnded) {
+        NSNumber *optNum = n.userInfo[AVAudioSessionInterruptionOptionKey];
+        if ([optNum unsignedIntegerValue] == AVAudioSessionInterruptionOptionShouldResume) {
+            [self resume];
+        }
+    }
+}
+
 - (void)playPauseTapped {
     if (self.isPlaying) [self pause]; else [self resume];
 }
@@ -229,21 +257,38 @@
     }
 }
 
+- (void)sliderTouchDown {
+    self.isSeeking = YES;
+}
+
 - (void)sliderChanged:(UISlider *)s {
-    // seek preview
+    if (!self.player) return;
+    CMTime dur = self.player.currentItem.duration;
+    if (CMTIME_IS_INVALID(dur) || dur.value == 0) return;
+    Float64 d = CMTimeGetSeconds(dur);
+    Float64 previewTime = d * s.value;
+    self.timeLabel.text = [NSString stringWithFormat:@"%02d:%02d / %02d:%02d", (int)previewTime/60, (int)previewTime%60, (int)d/60, (int)d%60];
 }
 
 - (void)sliderTouchUp {
+    self.isSeeking = NO;
     if (!self.player) return;
     CMTime dur = self.player.currentItem.duration;
-    if (CMTIME_IS_INVALID(dur)) return;
+    if (CMTIME_IS_INVALID(dur) || dur.value == 0) return;
     Float64 d = CMTimeGetSeconds(dur);
     Float64 t = d * self.progressSlider.value;
-    [self.player seekToTime:CMTimeMakeWithSeconds(t, 600)];
+    [self.player seekToTime:CMTimeMakeWithSeconds(t, 600) completionHandler:^(BOOL finished){
+        [self updateNowPlayingInfo];
+    }];
 }
 
 - (void)itemDidFinish:(NSNotification *)n {
-    [self nextTapped];
+    if (self.currentIndex + 1 < self.playlist.count) {
+        [self nextTapped];
+    } else {
+        [self pause];
+        [self.progressSlider setValue:0 animated:YES];
+    }
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -259,6 +304,14 @@
 - (void)dealloc {
     [self cleanupPlayer];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (NSUInteger)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskPortrait;
+}
+
+- (BOOL)shouldAutorotate {
+    return NO;
 }
 
 @end

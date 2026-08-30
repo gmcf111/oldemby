@@ -9,6 +9,7 @@
 @property (nonatomic, strong) OEEmbyItem *series;
 @property (nonatomic, strong) UITableView *tableView;
 @property (nonatomic, strong) NSArray *episodes;
+@property (nonatomic, assign) NSUInteger loadGeneration;
 @end
 
 @implementation OEEpisodeListViewController
@@ -36,14 +37,23 @@
     [self loadData];
 }
 
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    // Keep last row clear of the nav bar and tab bar (same convention as the other lists)
+    CGFloat navH = self.navigationController.navigationBar.frame.size.height + 20;
+    CGFloat tabH = self.tabBarController.tabBar.frame.size.height;
+    self.tableView.frame = CGRectMake(0, navH, self.view.bounds.size.width, self.view.bounds.size.height - navH - tabH);
+}
+
 - (void)loadData {
+    NSUInteger generation = ++self.loadGeneration;
     OEServerConfig *c = [OEServerConfig sharedConfig];
     if (!c.userId) {
         UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"未登录" message:@"请先在 视频 页登录" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
         [av show];
         return;
     }
-    NSString *oldTitle = self.title;
+    NSString *resetTitle = self.series.name ?: @"选集";
     self.title = @"加载中...";
     // Emby: GET /Shows/{seriesId}/Episodes?UserId=... returns all episodes ordered by season/episode
     NSString *path = [NSString stringWithFormat:@"/Shows/%@/Episodes", self.series.itemId];
@@ -51,19 +61,22 @@
                              @"Fields": @"PrimaryImageAspectRatio,Overview,RunTimeTicks",
                              @"ImageTypeLimit": @"1"};
     [[OEEmbyAPIClient sharedClient] GET:path params:params completion:^(id result, NSError *error){
-        self.title = oldTitle;
+        if (generation != self.loadGeneration) return;
+        self.title = resetTitle;
         if (error) {
             UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"加载失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
             [av show];
             return;
         }
-        NSArray *items = result[@"Items"];
+        id candidate = [result isKindOfClass:[NSDictionary class]] ? result[@"Items"] : nil;
+        NSArray *items = [candidate isKindOfClass:[NSArray class]] ? candidate : nil;
         NSMutableArray *out = [NSMutableArray array];
         for (NSDictionary *d in items) {
             if ([d isKindOfClass:[NSDictionary class]]) [out addObject:[OEEmbyItem itemWithDictionary:d]];
         }
         self.episodes = out;
         [self.tableView reloadData];
+        [[self.tableView viewWithTag:997] removeFromSuperview];
         if (self.episodes.count==0) {
             UILabel *empty = [[UILabel alloc] initWithFrame:CGRectMake(0, 100, self.view.bounds.size.width, 40)];
             empty.text = @"暂无剧集";
@@ -71,8 +84,6 @@
             empty.textAlignment = NSTextAlignmentCenter;
             empty.textColor = [UIColor grayColor];
             [self.tableView addSubview:empty];
-        } else {
-            [[self.tableView viewWithTag:997] removeFromSuperview];
         }
     }];
 }
@@ -83,6 +94,7 @@
     static NSString *ID = @"EpisodeCell";
     OEItemCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) cell = [[OEItemCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
+    cell.compactLayout = YES; // rowHeight is 60 here
     OEEmbyItem *it = self.episodes[indexPath.row];
     [cell configureWithItem:it];
     NSString *se = @"";

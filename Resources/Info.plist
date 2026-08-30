@@ -46,6 +46,13 @@
     </array>
     <key>UIRequiresPersistentWiFi</key>
     <false/>
+    <!-- Emby installations commonly expose a local HTTP endpoint; retain
+         compatibility with iOS 9 ATS while HTTPS remains supported. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
     <key>CFBundleIcons</key>
     <dict/>
 </dict>

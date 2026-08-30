@@ -4,17 +4,35 @@
 
 + (instancetype)itemWithDictionary:(NSDictionary *)dict {
     OEEmbyItem *it = [[OEEmbyItem alloc] init];
-    it.itemId = [dict objectForKey:@"Id"];
-    it.name = [dict objectForKey:@"Name"];
-    it.type = [dict objectForKey:@"Type"];
+    id rawId = [dict objectForKey:@"Id"];
+    id rawName = [dict objectForKey:@"Name"];
+    id rawType = [dict objectForKey:@"Type"];
+    it.itemId = [rawId isKindOfClass:[NSString class]] ? rawId : nil;
+    it.name = [rawName isKindOfClass:[NSString class]] ? rawName : nil;
+    it.type = [rawType isKindOfClass:[NSString class]] ? rawType : nil;
     it.itemType = [self typeFromString:it.type];
-    it.overview = [dict objectForKey:@"Overview"];
-    it.album = [dict objectForKey:@"Album"];
-    it.artist = [dict objectForKey:@"Artists"] ? [[dict objectForKey:@"Artists"] componentsJoinedByString:@", "] : [dict objectForKey:@"AlbumArtist"];
+    id overview = [dict objectForKey:@"Overview"];
+    id album = [dict objectForKey:@"Album"];
+    it.overview = [overview isKindOfClass:[NSString class]] ? overview : nil;
+    it.album = [album isKindOfClass:[NSString class]] ? album : nil;
+    id artists = [dict objectForKey:@"Artists"];
+    if ([artists isKindOfClass:[NSArray class]]) {
+        NSMutableArray *names = [NSMutableArray array];
+        for (id value in artists) {
+            if ([value isKindOfClass:[NSString class]] && [value length]) {
+                [names addObject:value];
+            }
+        }
+        it.artist = names.count ? [names componentsJoinedByString:@", "] : nil;
+    } else {
+        id albumArtist = [dict objectForKey:@"AlbumArtist"];
+        it.artist = [albumArtist isKindOfClass:[NSString class]] ? albumArtist : nil;
+    }
     // ImageTags -> Primary
     NSDictionary *tags = [dict objectForKey:@"ImageTags"];
     if ([tags isKindOfClass:[NSDictionary class]]) {
-        it.imageTag = [tags objectForKey:@"Primary"];
+        id primaryTag = [tags objectForKey:@"Primary"];
+        it.imageTag = [primaryTag isKindOfClass:[NSString class]] ? primaryTag : nil;
     }
     NSNumber *ticks = [dict objectForKey:@"RunTimeTicks"];
     if ([ticks isKindOfClass:[NSNumber class]]) it.runTimeTicks = [ticks longLongValue];
@@ -44,7 +62,11 @@
     while ([base hasSuffix:@"/"] && base.length>1) base=[base substringToIndex:base.length-1];
     // Emby image endpoint: /emby/Items/{Id}/Images/Primary?Tag=xxx&maxWidth=...
     // Use emby-style; legacy /emby prefix is optional but Emby 4.x prefers /emby
-    return [NSString stringWithFormat:@"%@/emby/Items/%@/Images/Primary?Tag=%@&maxWidth=%ld&quality=90", base, self.itemId, self.imageTag, (long)width];
+    // Hosts may already include the conventional /emby API prefix.
+    BOOL hasEmbyPrefix = [base hasSuffix:@"/emby"];
+    NSString *root = hasEmbyPrefix ? [base substringToIndex:base.length - 5] : base;
+    NSString *escapedTag = self.imageTag ? (NSString *)CFBridgingRelease(CFURLCreateStringByAddingPercentEscapes(NULL, (__bridge CFStringRef)self.imageTag, NULL, CFSTR(":/?#[]@!$&'()*+,;=%"), kCFStringEncodingUTF8)) : @"";
+    return [NSString stringWithFormat:@"%@/emby/Items/%@/Images/Primary?Tag=%@&maxWidth=%ld&quality=90", root, self.itemId, escapedTag ?: @"", (long)width];
 }
 
 - (NSString *)displayDuration {

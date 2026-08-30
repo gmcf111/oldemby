@@ -1,6 +1,6 @@
 #import <UIKit/UIKit.h>
 
-// Simple in-memory + disk cache, NSURLConnection based (iOS 6 compatible)
+// In-memory NSCache (iOS 6 compatible)
 @interface OEImageCache : NSObject
 
 + (instancetype)sharedCache;
