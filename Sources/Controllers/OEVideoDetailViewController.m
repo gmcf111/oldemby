@@ -146,7 +146,6 @@ static const CGFloat kCastStripHeight = 110.0;
         }
         if ([result isKindOfClass:[NSArray class]]) {
             self.castStrip.casts = result;
-            [self setNeedsLayout];
             [self.view setNeedsLayout];
         }
     }];
