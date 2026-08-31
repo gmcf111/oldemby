@@ -172,7 +172,7 @@ static const NSInteger kMaxColumns = 10;
         [self.contentView addSubview:slot];
         [self.slots addObject:slot];
     }
-    return self.slots[index];
+    return [self.slots objectAtIndex:index];
 }
 
 - (void)prepareForReuse {
@@ -199,7 +199,7 @@ static const NSInteger kMaxColumns = 10;
     }
     // Hide any slot beyond the current column count.
     for (NSInteger i = columns; i < (NSInteger)self.slots.count; ++i) {
-        self.slots[i].hidden = YES;
+        [self.slots[i] setHidden:YES];
     }
 }
 
