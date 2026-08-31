@@ -60,7 +60,6 @@ static const CGFloat kCastStripHeight = 110.0;
     // ScrollView to hold all content (cover+overview+casts+play button)
     _scrollView = [[UIScrollView alloc] initWithFrame:self.view.bounds];
     _scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _scrollView.alwaysBounceVertical = YES;
     _scrollView.showsVerticalScrollIndicator = YES;
     [self.view addSubview:_scrollView];
 

@@ -28,7 +28,6 @@ static const CGFloat kCastPadding = 8.0;
         _scrollView = [[UIScrollView alloc] initWithFrame:self.bounds];
         _scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         _scrollView.showsHorizontalScrollIndicator = NO;
-        _scrollView.alwaysBounceHorizontal = YES;
         [self addSubview:_scrollView];
 
         _noCastLabel = [[UILabel alloc] initWithFrame:CGRectZero];
