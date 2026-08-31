@@ -128,7 +128,9 @@ git push origin main
 
 ## 许可证
 
-代码部分 MIT；SDK 归属 Apple，CI 时下载受其原仓库 Licence 约束。
+本项目源代码采用 **MIT License**（见根目录 `LICENSE`），版权归 `gmcf111` 所有。
+
+`iPhoneOS SDK` 归 Apple 所有；CI 构建时动态获取的 `theos/sdks`、`xybp888/iOS-SDKs` 等第三方 SDK/工具链归其原作者所有，受其各自许可证约束（详见上文“SDK 来源说明”），与本项目 MIT 许可证无关。
 
 ## 致谢
 
