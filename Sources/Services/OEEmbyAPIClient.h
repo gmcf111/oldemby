@@ -28,6 +28,7 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 
 // Helpers
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width;
+- (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width height:(NSInteger)height;
 
 // Generic
 - (void)GET:(NSString *)path params:(NSDictionary *)params completion:(OEAPICompletion)completion;

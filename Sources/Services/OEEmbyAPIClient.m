@@ -306,7 +306,11 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
 }
 
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width {
-    NSString *url = [item primaryImageURLWithHost:[self baseURL] maxWidth:width];
+    return [self imageURLForItem:item width:width height:0];
+}
+
+- (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width height:(NSInteger)height {
+    NSString *url = [item primaryImageURLWithHost:[self baseURL] maxWidth:width maxHeight:height];
     NSString *token = [OEServerConfig sharedConfig].accessToken;
     if (!url.length || !token.length) return url;
     // ImageCache uses a plain NSURLConnection, so authenticate image

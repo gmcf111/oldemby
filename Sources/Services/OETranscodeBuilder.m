@@ -55,10 +55,10 @@
         @"DirectPlayProfiles": @[],
         @"TranscodingProfiles": @[
             @{
-                @"Container": @"mp4",
+                @"Container": @"ts",
                 @"Type": @"Video",
                 @"VideoCodec": @"h264",
-                @"AudioCodec": @"aac,mp3",
+                @"AudioCodec": @"aac",
                 @"Context": @"Streaming",
                 @"Protocol": @"http",
                 @"MaxAudioChannels": @"2",
@@ -83,8 +83,7 @@
             @{@"Format": @"ass", @"Method": @"External"}
         ],
         @"ResponseProfiles": @[
-            @{@"Container": @"m3u8", @"Type": @"Video", @"MimeType": @"application/x-mpegURL"},
-            @{@"Container": @"mp4", @"Type": @"Video", @"MimeType": @"video/mp4"}
+            @{@"Container": @"m3u8", @"Type": @"Video", @"MimeType": @"application/x-mpegURL"}
         ]
     };
 }
@@ -126,7 +125,7 @@
     }
     NSInteger w = [s widthForResolution];
     NSInteger h = [s heightForResolution];
-    return [NSString stringWithFormat:@"VideoCodec=h264&AudioCodec=aac&MaxWidth=%ld&MaxHeight=%ld&MaxVideoBitrate=%ld&VideoBitrate=%ld&AudioBitrate=%ld&Container=mp4&Static=false",
+    return [NSString stringWithFormat:@"VideoCodec=h264&AudioCodec=aac&MaxWidth=%ld&MaxHeight=%ld&MaxVideoBitrate=%ld&VideoBitrate=%ld&AudioBitrate=%ld&Container=ts&Static=false",
             (long)w, (long)h, (long)s.maxVideoBitrate, (long)s.maxVideoBitrate, (long)s.maxAudioBitrate];
 }
 
@@ -168,6 +167,10 @@
     if (!src) return nil;
     NSString *msId = [src[@"Id"] isKindOfClass:[NSString class]] ? src[@"Id"] : ([src[@"ETag"] isKindOfClass:[NSString class]] ? src[@"ETag"] : @"");
     if (outId) *outId = msId;
+    // A transcode request must receive an explicit server-generated URL.  A
+    // generic /Videos/.../stream fallback is commonly progressive MP4 and may
+    // stall forever while a live transcode is still being produced on iOS 6.
+    if (!url.length && ![OETranscodeSettings sharedSettings].directPlay && !isAudio) return nil;
     if (!url.length) {
         // Emby 4.x may return MediaSources with SupportsDirectStream etc,
         // but no URL -> build the appropriate audio/video stream endpoint.

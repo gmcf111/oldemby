@@ -4,6 +4,7 @@
 #import "Models/OEEmbyItem.h"
 #import "Models/OEServerConfig.h"
 #import "Controllers/OEVideoDetailViewController.h"
+#import "Views/OETheme.h"
 
 @interface OEEpisodeListViewController ()
 @property (nonatomic, strong) OEEmbyItem *series;
@@ -24,13 +25,15 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = self.series.name ?: @"选集";
-    self.view.backgroundColor = [UIColor whiteColor];
+    [OETheme prepareViewController:self];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"刷新" style:UIBarButtonItemStylePlain target:self action:@selector(loadData)];
 
     self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
+    self.tableView.backgroundColor = [OETheme libraryBackgroundColor];
+    self.tableView.separatorColor = [OETheme separatorColor];
     self.tableView.rowHeight = 60;
     [self.view addSubview:self.tableView];
 
@@ -39,17 +42,14 @@
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    // Keep last row clear of the nav bar and tab bar (same convention as the other lists)
-    CGFloat navH = self.navigationController.navigationBar.frame.size.height + 20;
-    CGFloat tabH = self.tabBarController.tabBar.frame.size.height;
-    self.tableView.frame = CGRectMake(0, navH, self.view.bounds.size.width, self.view.bounds.size.height - navH - tabH);
+    self.tableView.frame = self.view.bounds;
 }
 
 - (void)loadData {
     NSUInteger generation = ++self.loadGeneration;
     OEServerConfig *c = [OEServerConfig sharedConfig];
     if (!c.userId) {
-        UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"未登录" message:@"请先在 视频 页登录" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
+        UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"未登录" message:@"请先在影视页登录" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
         [av show];
         return;
     }
@@ -82,7 +82,7 @@
             empty.text = @"暂无剧集";
             empty.tag = 997;
             empty.textAlignment = NSTextAlignmentCenter;
-            empty.textColor = [UIColor grayColor];
+            empty.textColor = [OETheme secondaryTextColor];
             [self.tableView addSubview:empty];
         }
     }];

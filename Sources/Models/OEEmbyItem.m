@@ -34,6 +34,8 @@
         id primaryTag = [tags objectForKey:@"Primary"];
         it.imageTag = [primaryTag isKindOfClass:[NSString class]] ? primaryTag : nil;
     }
+    NSNumber *ratio = [dict objectForKey:@"PrimaryImageAspectRatio"];
+    if ([ratio isKindOfClass:[NSNumber class]] && [ratio doubleValue] > 0) it.primaryImageAspectRatio = [ratio doubleValue];
     NSNumber *ticks = [dict objectForKey:@"RunTimeTicks"];
     if ([ticks isKindOfClass:[NSNumber class]]) it.runTimeTicks = [ticks longLongValue];
     NSNumber *sn = [dict objectForKey:@"ParentIndexNumber"];
@@ -56,17 +58,21 @@
 }
 
 - (NSString *)primaryImageURLWithHost:(NSString *)host maxWidth:(NSInteger)width {
+    return [self primaryImageURLWithHost:host maxWidth:width maxHeight:0];
+}
+
+- (NSString *)primaryImageURLWithHost:(NSString *)host maxWidth:(NSInteger)width maxHeight:(NSInteger)height {
     if (!self.itemId || !self.imageTag) return nil;
     if (!host) return nil;
     NSString *base = host;
     while ([base hasSuffix:@"/"] && base.length>1) base=[base substringToIndex:base.length-1];
-    // Emby image endpoint: /emby/Items/{Id}/Images/Primary?Tag=xxx&maxWidth=...
-    // Use emby-style; legacy /emby prefix is optional but Emby 4.x prefers /emby
-    // Hosts may already include the conventional /emby API prefix.
     BOOL hasEmbyPrefix = [base hasSuffix:@"/emby"];
     NSString *root = hasEmbyPrefix ? [base substringToIndex:base.length - 5] : base;
     NSString *escapedTag = self.imageTag ? (NSString *)CFBridgingRelease(CFURLCreateStringByAddingPercentEscapes(NULL, (__bridge CFStringRef)self.imageTag, NULL, CFSTR(":/?#[]@!$&'()*+,;=%"), kCFStringEncodingUTF8)) : @"";
-    return [NSString stringWithFormat:@"%@/emby/Items/%@/Images/Primary?Tag=%@&maxWidth=%ld&quality=90", root, self.itemId, escapedTag ?: @"", (long)width];
+    NSMutableString *url = [NSMutableString stringWithFormat:@"%@/emby/Items/%@/Images/Primary?Tag=%@&maxWidth=%ld", root, self.itemId, escapedTag ?: @"", (long)width];
+    if (height > 0) [url appendFormat:@"&maxHeight=%ld", (long)height];
+    [url appendString:@"&quality=90"];
+    return url;
 }
 
 - (NSString *)displayDuration {

@@ -21,6 +21,10 @@
 #define kDefaultDirectPlay             NO
 
 // Notification names
-#define kNotificationPlaybackStateChanged @"OEPlaybackStateChanged"
+#define kNotificationPlaybackStateChanged        @"OEPlaybackStateChanged"
+#define kNotificationMusicPlaybackStateChanged   @"OEMusicPlaybackStateChanged"
+#define kNotificationMusicPlaybackProgressChanged @"OEMusicPlaybackProgressChanged"
+#define kNotificationMusicMiniPlayerVisibilityChanged @"OEMusicMiniPlayerVisibilityChanged"
+#define kNotificationMusicFullPlayerVisibilityChanged @"OEMusicFullPlayerVisibilityChanged"
 
 #endif

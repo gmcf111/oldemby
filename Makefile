@@ -17,13 +17,18 @@ OldEmby_FILES = \
 	Sources/Controllers/OESettingsViewController.m \
 	Sources/Controllers/OEMusicLibraryViewController.m \
 	Sources/Controllers/OEMusicPlayerViewController.m \
+	Sources/Controllers/OERootTabBarController.m \
 	Sources/Models/OEEmbyItem.m \
 	Sources/Models/OETranscodeSettings.m \
 	Sources/Models/OEServerConfig.m \
 	Sources/Services/OEEmbyAPIClient.m \
 	Sources/Services/OETranscodeBuilder.m \
 	Sources/Services/OEImageCache.m \
-	Sources/Views/OEItemCell.m
+	Sources/Services/OEMusicPlaybackManager.m \
+	Sources/Views/OEItemCell.m \
+	Sources/Views/OETheme.m \
+	Sources/Views/OEIconFactory.m \
+	Sources/Views/OEMiniPlayerView.m
 
 OldEmby_FRAMEWORKS = UIKit Foundation MediaPlayer AVFoundation CoreGraphics QuartzCore CoreMedia AudioToolbox MediaToolbox
 OldEmby_PRIVATE_FRAMEWORKS =

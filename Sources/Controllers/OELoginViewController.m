@@ -2,6 +2,7 @@
 #import "Services/OEEmbyAPIClient.h"
 #import "Models/OEServerConfig.h"
 #import "Constants.h"
+#import "Views/OETheme.h"
 
 @interface OELoginViewController ()
 @property (nonatomic, strong) UITextField *hostField;
@@ -16,7 +17,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"连接 Emby";
-    self.view.backgroundColor = [UIColor colorWithWhite:0.95 alpha:1];
+    [OETheme prepareViewController:self];
 
     CGFloat w = self.view.bounds.size.width;
     CGFloat y = 80;
@@ -37,7 +38,7 @@
     y += 54;
     self.statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, y, w-40, 40)];
     self.statusLabel.font = [UIFont systemFontOfSize:12];
-    self.statusLabel.textColor = [UIColor darkGrayColor];
+    self.statusLabel.textColor = [OETheme secondaryTextColor];
     self.statusLabel.numberOfLines = 2;
     self.statusLabel.textAlignment = NSTextAlignmentCenter;
     [self.view addSubview:self.statusLabel];

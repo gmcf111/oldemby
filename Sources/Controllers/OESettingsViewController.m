@@ -2,6 +2,7 @@
 #import "Models/OETranscodeSettings.h"
 #import "Models/OEServerConfig.h"
 #import "Services/OEEmbyAPIClient.h"
+#import "Views/OETheme.h"
 
 @interface OESettingsViewController ()
 @property (nonatomic, strong) UITableView *table;
@@ -13,13 +14,14 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"设置";
-    self.view.backgroundColor = [UIColor whiteColor];
+    [OETheme prepareViewController:self];
     self.settings = [OETranscodeSettings sharedSettings];
 
     self.table = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleGrouped];
     self.table.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.table.dataSource = self;
     self.table.delegate = self;
+    self.table.backgroundColor = [OETheme libraryBackgroundColor];
     [self.view addSubview:self.table];
 
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"保存" style:UIBarButtonItemStyleDone target:self action:@selector(save)];
@@ -45,7 +47,7 @@
         [[OEEmbyAPIClient sharedClient] logout];
         [self.table reloadData];
         [[NSNotificationCenter defaultCenter] postNotificationName:@"OEDidLogoutNotification" object:nil];
-        UIAlertView *a2 = [[UIAlertView alloc] initWithTitle:@"已退出" message:@"请到 视频 页重新登录" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
+        UIAlertView *a2 = [[UIAlertView alloc] initWithTitle:@"已退出" message:@"请到影视页重新登录" delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
         [a2 show];
     }
     if (alertView.tag >= 2000 && buttonIndex==1) {
