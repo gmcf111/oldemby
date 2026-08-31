@@ -210,7 +210,7 @@
     self.lyricsEmptyLabel.hidden = NO;
     [self.lyricsTable reloadData];
     NSString *itemId = [item.itemId copy];
-    [[OEEmbyAPIClient sharedClient] fetchLyricsForItem:item completion:^(id result, NSError *error) {
+    [[OEEmbyAPIClient sharedClient] fetchLyricsForAudioItem:item completion:^(id result, NSError *error) {
         if (![itemId isEqualToString:self.lyricsItemId]) return;
         if ([result isKindOfClass:[NSString class]]) {
             self.lyrics = [OELyricsLine linesFromTextSubtitleString:result];

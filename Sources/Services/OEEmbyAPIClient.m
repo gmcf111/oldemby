@@ -392,7 +392,7 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
     }];
 }
 
-- (void)fetchLyricsForItem:(OEEmbyItem *)item completion:(OEAPICompletion)completion {
+- (void)fetchLyricsForAudioItem:(OEEmbyItem *)item completion:(OEAPICompletion)completion {
     if (!item.itemId.length) {
         if (completion) completion(@"", nil);
         return;
