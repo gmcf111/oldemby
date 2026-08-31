@@ -41,7 +41,8 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y \
             build-essential fakeroot rsync curl perl zip git libxml2 \
-            libplist-utils dpkg-dev binutils xz-utils unzip zip file
+            libplist-utils dpkg-dev binutils xz-utils unzip zip file \
+            python3-pip
           # Runtime dependency of the iOS toolchain (per theos/bin/install-theos)
           sudo apt-get install -y libtinfo6
           # Prefer the sysv fakeroot backend, as install-theos does
@@ -191,6 +192,16 @@ jobs:
           fi
           echo "SDK setup complete"
 
+      - name: Generate app icons
+        run: |
+          set -e
+          # Render Resources/icon.svg (green + white E) into the PNG sizes
+          # iOS 6-9 expect. Pillow is installed fresh here so the build
+          # never depends on binaries committed to the repo.
+          python3 -m pip install --quiet pillow
+          python3 tools/gen_icons.py Resources
+          ls -la Resources/*.png
+
       - name: Build (make package)
         run: |
           set -e -o pipefail
@@ -217,6 +228,22 @@ jobs:
           file "$BIN"
           file "$BIN" | grep -q "Mach-O" || { echo "::error::$BIN is not a Mach-O binary"; exit 1; }
           ls -lh "$BIN"
+
+      - name: Patch binary for iOS 6 dyld bindings
+        run: |
+          set -e
+          # The 9.3 SDK's Foundation.tbd re-exports ObjC classes that only
+          # live in Foundation on iOS 6 (NSURL* -> CFNetwork, NSArray etc ->
+          # CoreFoundation). ld follows the re-exports, so dyld on iOS 6
+          # dies at launch with "Symbol not found: _OBJC_CLASS_$_NSMutableURLRequest".
+          # Rewrite the bind table to point those symbols at Foundation.
+          BIN=".theos/obj/OldEmby.app/OldEmby"
+          [ -f "$BIN" ] || { echo "::error::$BIN missing"; exit 1; }
+          python3 tools/fix_ios6_bindings.py "$BIN"
+          # Re-sign: the patch strips the old code signature.
+          ldid -S "$BIN"
+          echo "=== Post-patch check ==="
+          file "$BIN"
 
       - name: Assemble IPA (Payload/OldEmby.app → .ipa)
         run: |
@@ -256,6 +283,18 @@ jobs:
           fi
           echo "Binary has a clean pseudo-signature (no entitlements) - sideload re-sign friendly"
 
+          # iOS 6 dyld gate: every ObjC class binding must resolve through a
+          # framework that already exists on iOS 6 (this is the crash the
+          # first device build shipped with). fix_ios6_bindings.py prints
+          # "nothing to patch" and exits 0 when the binary is already clean,
+          # so running it here is a pure verification pass.
+          python3 tools/fix_ios6_bindings.py "$BIN" | tee /tmp/bindings-check.log
+          grep -q "nothing to patch\|relocated .* bindings to Foundation" /tmp/bindings-check.log \
+            || { echo "::error::iOS 6 binding verification failed"; exit 1; }
+          # Re-sign only if the verifier stripped a stale signature
+          # (it never does on a second pass, but be explicit).
+          ldid -S "$BIN"
+
           rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
@@ -263,11 +302,17 @@ jobs:
           # Structural sanity checks that installers rely on
           PLIST="Payload/OldEmby.app/Info.plist"
           [ -f "$PLIST" ] || { echo "::error::Info.plist missing from app bundle"; exit 1; }
-          for key in CFBundleIdentifier CFBundleExecutable CFBundleVersion MinimumOSVersion; do
+          for key in CFBundleIdentifier CFBundleExecutable CFBundleVersion MinimumOSVersion CFBundleIconFiles; do
             plistutil -i "$PLIST" -f xml | grep -q "<key>$key</key>" \
               || { echo "::error::Info.plist lacks required key $key"; exit 1; }
           done
           echo "Info.plist structure OK"
+          # Icon gate: iOS 6 shows a blank white icon without these.
+          for icon in Icon.png Icon@2x.png Icon-72.png Icon-72@2x.png; do
+            [ -f "Payload/OldEmby.app/$icon" ] \
+              || { echo "::error::Missing $icon in app bundle"; exit 1; }
+          done
+          echo "App icons present"
 
           VERSION=$(grep -m1 "^Version:" control | awk '{print $2}')
           COMMIT=$(git rev-parse --short HEAD)

@@ -25,5 +25,10 @@ theos/sdks/
 *.pem
 *.mobileprovision
 
+# Generated at CI time by tools/gen_icons.py from Resources/icon.svg
+# (keep the SVG source; PNGs are reproducible artifacts)
+Resources/*.png
+
 # Prompt files - local only, not needed for build, do not track
 提示词/
+__pycache__/

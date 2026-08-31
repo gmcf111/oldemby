@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OldEmby app icon source: green background, large white E -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Green background (Emby green) -->
+  <rect width="512" height="512" fill="#52B54B"/>
+  <!-- Large white E -->
+  <text x="256" y="256"
+        font-family="Helvetica, Arial, sans-serif"
+        font-size="400"
+        font-weight="bold"
+        fill="#FFFFFF"
+        text-anchor="middle"
+        dominant-baseline="central">E</text>
+</svg>

@@ -20,6 +20,32 @@
     <true/>
     <key>MinimumOSVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFiles</key>
+    <array>
+        <string>Icon</string>
+        <string>Icon@2x</string>
+        <string>Icon-72</string>
+        <string>Icon-72@2x</string>
+        <string>Icon-60@2x</string>
+        <string>Icon-76</string>
+        <string>Icon-76@2x</string>
+    </array>
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>Icon</string>
+                <string>Icon@2x</string>
+                <string>Icon-72</string>
+                <string>Icon-72@2x</string>
+                <string>Icon-60@2x</string>
+                <string>Icon-76</string>
+                <string>Icon-76@2x</string>
+            </array>
+        </dict>
+    </dict>
     <key>UIDeviceFamily</key>
     <array>
         <integer>1</integer>

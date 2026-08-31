@@ -19,7 +19,11 @@ oldemby/
 ├── control                       # Debian control (越狱包元信息)
 ├── OldEmby.plist                 # (保留) Tweak 过滤器占位
 ├── Resources/
-│   └── Info.plist                # CFBundleIdentifier, MinimumOSVersion 6.0, UIBackgroundModes audio
+│   ├── Info.plist                # CFBundleIdentifier, MinimumOSVersion 6.0, UIBackgroundModes audio, CFBundleIconFiles
+│   └── icon.svg                  # 图标源文件 (绿底白 E), CI 渲染为各尺寸 PNG
+├── tools/
+│   ├── fix_ios6_bindings.py      # Mach-O bind 表修补 (iOS 6 dyld 符号归属)
+│   └── gen_icons.py              # icon.svg → 各尺寸 PNG (Pillow)
 ├── Sources/
 │   ├── main.m
 │   ├── AppDelegate.h/m           # UIWindow + UITabBarController (视频/音乐/设置), AVAudioSession
@@ -102,6 +106,11 @@ oldemby/
 - 布局: 手动 `frame`，无 Storyboard/XIB，`UITableView` 而非 `UICollectionView` 复杂布局
 - 播放: `MPMoviePlayerViewController` (iOS 2.0+)，非 `AVPlayerViewController` (iOS 8+)
 - 音频后台: `AVAudioSessionCategoryPlayback` + `MPNowPlayingInfoCenter` (iOS 5+) + `remoteControlReceivedWithEvent:` (非 `MPRemoteCommandCenter` iOS 7.1+)
+- **dyld 绑定修补**: 9.3 SDK 的 `Foundation.tbd` 把 `NSURL*` 类 re-export 到 CFNetwork、`NSArray` 等集合类 re-export 到 CoreFoundation——这在 iOS 8+ 才成立，iOS 6 上 dyld 启动即报 `Symbol not found: _OBJC_CLASS_$_NSMutableURLRequest` 闪退。CI 构建后用 `tools/fix_ios6_bindings.py` 重写 Mach-O bind 表把这些类重新绑定到 Foundation，再以 `ldid -S` 重新伪签名（见 `.github/workflows/build.yml` 的 "Patch binary for iOS 6 dyld bindings" 步骤，该脚本对已修补的二进制幂等）
+
+## 应用图标
+
+`Resources/icon.svg` 为图标源文件（绿色底 + 白色大写 E）。CI 在构建前用 `tools/gen_icons.py`（Pillow）将其渲染为 iOS 6-9 所需的全部 PNG 尺寸（57/72/114/120/144/152/76），通过 `Info.plist` 的 `CFBundleIconFiles` 声明；PNG 属于可再生成的产物，不入库。
 
 ## 分阶段开发计划
 
