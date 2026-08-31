@@ -64,9 +64,8 @@
         [bar setBarTintColor:[self navigationBarColor]];
         [bar setTintColor:[self accentColor]];
     } else {
-        // iOS 5/6: tintColor paints the whole bar. Use the bar color (never
-        // the blue accent) over the classic default gradient; UIBarStyleBlack
-        // would force the black look we are avoiding.
+        // UINavigationBar has supported tintColor since iOS 5, where it paints
+        // the whole bar over the classic gradient.
         if ([bar respondsToSelector:@selector(setBarStyle:)]) [bar setBarStyle:UIBarStyleDefault];
         [bar setTintColor:[self navigationBarColor]];
     }
@@ -87,10 +86,10 @@
         [tab setBarTintColor:[self tabBarColor]];
         [tab setTintColor:[self accentColor]];
     } else {
-        // iOS 5/6: tintColor paints the whole bar; the selected-tab glow is
-        // selectedImageTintColor. Again use the bar color, not the accent.
+        // UITabBar did not inherit tintColor until iOS 7. On iOS 5/6 use its
+        // dedicated selectedImageTintColor API instead; sending tintColor here
+        // raises an unrecognized-selector exception at launch.
         if ([tab respondsToSelector:@selector(setBarStyle:)]) [tab setBarStyle:UIBarStyleDefault];
-        [tab setTintColor:[self tabBarColor]];
         if ([tab respondsToSelector:@selector(setSelectedImageTintColor:)]) {
             [tab setSelectedImageTintColor:[self accentColor]];
         }
@@ -120,8 +119,24 @@
 }
 
 + (void)applyApplicationAppearance {
-    [self applyToNavigationBar:[UINavigationBar appearance]];
-    [self applyToTabBar:[UITabBar appearance]];
+    // UIAppearance is a forwarding proxy, so its respondsToSelector: result
+    // cannot be used to determine whether a selector exists on iOS 6. Bars
+    // already in the window are styled by applyToBarsInView:. Newer systems
+    // may additionally use the proxy after checking the concrete classes.
+    if ([UINavigationBar instancesRespondToSelector:@selector(setBarTintColor:)]) {
+        UINavigationBar *bar = [UINavigationBar appearance];
+        [bar setBarTintColor:[self navigationBarColor]];
+        [bar setTintColor:[self accentColor]];
+        [bar setTitleTextAttributes:@{
+            UITextAttributeTextColor: [self primaryTextColor],
+            UITextAttributeFont: [UIFont boldSystemFontOfSize:17]
+        }];
+    }
+    if ([UITabBar instancesRespondToSelector:@selector(setBarTintColor:)]) {
+        UITabBar *tab = [UITabBar appearance];
+        [tab setBarTintColor:[self tabBarColor]];
+        [tab setTintColor:[self accentColor]];
+    }
 }
 
 + (void)prepareViewController:(UIViewController *)viewController {

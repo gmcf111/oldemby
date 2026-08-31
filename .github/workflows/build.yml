@@ -63,9 +63,24 @@ jobs:
                       if not used:
                           continue
                       guard = "respondsToSelector:@selector(" + selector + ")"
+                      class_guard = "instancesRespondToSelector:@selector(" + selector + ")"
                       context = "\n".join(lines[max(0, index - 6):index + 1])
-                      if guard not in context:
+                      if guard not in context and class_guard not in context:
                           violations.append("%s:%d uses %s without %s" % (path, index + 1, token, guard))
+
+          # UIAppearance objects are forwarding proxies. Their
+          # respondsToSelector: result is not a valid iOS 6 availability check,
+          # so never pass one through the instance-styling helpers.
+          theme_path = Path("Sources/Views/OETheme.m")
+          if theme_path.exists():
+              theme_source = theme_path.read_text(encoding="utf-8")
+              forbidden_proxy_uses = (
+                  "[self applyToNavigationBar:[UINavigationBar appearance]]",
+                  "[self applyToTabBar:[UITabBar appearance]]",
+              )
+              for use in forbidden_proxy_uses:
+                  if use in theme_source:
+                      violations.append("%s must not pass a UIAppearance proxy to instance styling helpers" % use)
           if violations:
               print("::error::iOS 7+ API use must be guarded for the iOS 6 deployment target")
               print("\n".join(violations))
