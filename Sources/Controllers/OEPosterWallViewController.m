@@ -17,6 +17,7 @@
 @property (nonatomic, assign) NSInteger pageSize;
 @property (nonatomic, assign) BOOL loadingPage;
 @property (nonatomic, assign) BOOL hasMorePages;
+@property (nonatomic, assign) NSInteger lastColumnCount;
 @end
 
 @implementation OEPosterWallViewController
@@ -36,6 +37,33 @@
     return @"Movie,Series";
 }
 
+- (NSInteger)currentColumnCount {
+    CGSize size = self.view.bounds.size;
+    if (size.width < 1 || size.height < 1) {
+        size = self.tableView.bounds.size;
+    }
+    if (size.width < 1 || size.height < 1) {
+        // fallback to screen; screen on iOS 6 is always portrait, so use statusBarOrientation
+        return [OEPosterGridCell columnCountForTableWidth:size.width];
+    }
+    BOOL isPad = (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
+    if (isPad) {
+        return [OEPosterGridCell columnCountForViewSize:size];
+    }
+    return [OEPosterGridCell columnCountForTableWidth:size.width];
+}
+
+- (CGFloat)currentRowHeight {
+    CGSize size = self.view.bounds.size;
+    if (size.width < 1) size.width = self.tableView.bounds.size.width;
+    if (size.width < 1) size.width = [UIScreen mainScreen].bounds.size.width;
+    BOOL isPad = (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
+    if (isPad && size.height > 1) {
+        return [OEPosterGridCell rowHeightForViewSize:size];
+    }
+    return [OEPosterGridCell rowHeightForTableWidth:size.width];
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     [OETheme prepareViewController:self];
@@ -48,7 +76,8 @@
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.rowHeight = [OEPosterGridCell rowHeightForTableWidth:self.view.bounds.size.width];
+    self.tableView.rowHeight = [self currentRowHeight];
+    self.lastColumnCount = [self currentColumnCount];
     [self applyTheme];
     [self.view addSubview:self.tableView];
     self.pageSize = 60;
@@ -61,7 +90,18 @@
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     self.tableView.frame = self.view.bounds;
-    self.tableView.rowHeight = [OEPosterGridCell rowHeightForTableWidth:self.view.bounds.size.width];
+    CGFloat newRowHeight = [self currentRowHeight];
+    NSInteger newCols = [self currentColumnCount];
+    BOOL rowHeightChanged = fabs(self.tableView.rowHeight - newRowHeight) > 0.5;
+    BOOL columnCountChanged = newCols != self.lastColumnCount;
+    if (rowHeightChanged) self.tableView.rowHeight = newRowHeight;
+    if (columnCountChanged) {
+        self.lastColumnCount = newCols;
+        [self.tableView reloadData];
+    } else if (rowHeightChanged) {
+        // 行高变化但列数未变时，刷新可见行以重算布局
+        [self.tableView reloadData];
+    }
 }
 
 - (void)applyTheme {
@@ -131,19 +171,25 @@
 #pragma mark - Table
 
 - (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
-    NSInteger rows = (NSInteger)ceil((double)self.items.count / [OEPosterGridCell columnCount]);
+    NSInteger cols = [self currentColumnCount];
+    if (cols < 1) cols = 1;
+    NSInteger rows = (NSInteger)ceil((double)self.items.count / cols);
     if (indexPath.row == rows - 1 && !self.loadingPage && self.hasMorePages) [self loadPageAtStart:self.pageStart reset:NO];
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return (NSInteger)ceil((double)self.items.count / [OEPosterGridCell columnCount]);
+    NSInteger cols = [self currentColumnCount];
+    if (cols < 1) cols = 1;
+    return (NSInteger)ceil((double)self.items.count / cols);
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     static NSString *ID = @"OEPosterGridCell";
     OEPosterGridCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) cell = [[OEPosterGridCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
-    NSInteger startIndex = indexPath.row * [OEPosterGridCell columnCount];
+    NSInteger cols = [self currentColumnCount];
+    if (cols < 1) cols = 1;
+    NSInteger startIndex = indexPath.row * cols;
     [cell configureWithItems:self.items startIndex:startIndex target:self action:@selector(posterTapped:)];
     return cell;
 }
