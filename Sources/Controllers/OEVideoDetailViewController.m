@@ -16,6 +16,11 @@
 @property (nonatomic, strong) UIButton *playBtn;
 @property (nonatomic, strong) MPMoviePlayerViewController *activePlayerController;
 @property (nonatomic, assign) BOOL playerBecamePlayable;
+@property (nonatomic, assign) BOOL fetchingStream;
+@property (nonatomic, assign) BOOL dismissingPlayer;
+@property (nonatomic, assign) NSUInteger playRequestGeneration;
+@property (nonatomic, assign) NSInteger pendingFinishReason;
+@property (nonatomic, strong) NSError *pendingPlaybackError;
 @end
 
 @implementation OEVideoDetailViewController
@@ -108,26 +113,42 @@
 }
 
 - (void)playTapped {
+    if (self.fetchingStream || self.activePlayerController || self.dismissingPlayer) return;
+    NSUInteger generation = ++self.playRequestGeneration;
+    self.fetchingStream = YES;
     self.statusLabel.text = @"正在请求 HLS 转码流…";
     [self.playBtn setTitle:@"正在获取播放地址…" forState:UIControlStateNormal];
     self.playBtn.enabled = NO;
     [[OEEmbyAPIClient sharedClient] fetchStreamURLForItem:self.item.itemId isAudio:NO completion:^(id result, NSError *error) {
+        if (generation != self.playRequestGeneration) return;
+        self.fetchingStream = NO;
         self.playBtn.enabled = YES;
         [self.playBtn setTitle:[self playButtonTitle] forState:UIControlStateNormal];
         if (error) { [self showPlaybackError:error.localizedDescription]; return; }
         NSString *streamURL = [result isKindOfClass:[NSString class]] ? result : nil;
         NSURL *url = [NSURL URLWithString:streamURL];
-        if (!url) { [self showPlaybackError:@"服务器返回了无效的播放地址"]; return; }
+        if (!url || !url.scheme.length || !url.host.length) { [self showPlaybackError:@"服务器返回了无效的播放地址"]; return; }
+        if (self.activePlayerController || self.dismissingPlayer) return;
         NSLog(@"[OldEmby] video stream URL: %@", streamURL);
         [self presentPlayerForURL:url];
     }];
 }
 
+- (void)removePlayerObserversForPlayer:(MPMoviePlayerController *)player {
+    if (!player) return;
+    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+    [center removeObserver:self name:MPMoviePlayerLoadStateDidChangeNotification object:player];
+    [center removeObserver:self name:MPMoviePlayerPlaybackStateDidChangeNotification object:player];
+    [center removeObserver:self name:MPMoviePlayerPlaybackDidFinishNotification object:player];
+}
+
 - (void)presentPlayerForURL:(NSURL *)url {
+    if (!url || self.activePlayerController || self.dismissingPlayer) return;
     MPMoviePlayerViewController *controller = [[MPMoviePlayerViewController alloc] initWithContentURL:url];
-    if (!controller) { [self showPlaybackError:@"无法初始化系统播放器"]; return; }
+    if (!controller || !controller.moviePlayer) { [self showPlaybackError:@"无法初始化系统播放器"]; return; }
     self.activePlayerController = controller;
     self.playerBecamePlayable = NO;
+    self.dismissingPlayer = NO;
     controller.moviePlayer.movieSourceType = MPMovieSourceTypeStreaming;
     controller.moviePlayer.shouldAutoplay = YES;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieLoadStateChanged:) name:MPMoviePlayerLoadStateDidChangeNotification object:controller.moviePlayer];
@@ -140,6 +161,7 @@
 
 - (void)movieLoadStateChanged:(NSNotification *)notification {
     MPMoviePlayerController *player = notification.object;
+    if (player != self.activePlayerController.moviePlayer || self.dismissingPlayer) return;
     if (player.loadState & MPMovieLoadStatePlayable) {
         self.playerBecamePlayable = YES;
         self.statusLabel.text = @"视频已就绪";
@@ -151,26 +173,31 @@
 
 - (void)moviePlaybackStateChanged:(NSNotification *)notification {
     MPMoviePlayerController *player = notification.object;
+    if (player != self.activePlayerController.moviePlayer || self.dismissingPlayer) return;
     if (player.playbackState == MPMoviePlaybackStatePlaying) self.statusLabel.text = @"正在播放";
     else if (player.playbackState == MPMoviePlaybackStateInterrupted) self.statusLabel.text = @"播放被中断";
 }
 
-- (void)movieFinished:(NSNotification *)notification {
-    MPMoviePlayerController *player = notification.object;
-    NSInteger reason = [notification.userInfo[MPMoviePlayerPlaybackDidFinishReasonUserInfoKey] integerValue];
-    NSError *error = notification.userInfo[@"error"];
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:MPMoviePlayerLoadStateDidChangeNotification object:player];
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:MPMoviePlayerPlaybackStateDidChangeNotification object:player];
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:MPMoviePlayerPlaybackDidFinishNotification object:player];
-    if (self.activePlayerController) {
-        [self dismissMoviePlayerViewControllerAnimated];
-        self.activePlayerController = nil;
-    }
-    if (reason == MPMovieFinishReasonPlaybackError) {
-        [self showPlaybackError:error.localizedDescription ?: @"系统播放器无法播放该 HLS 流，请检查 Emby 转码日志"];
+- (void)finishDismissingPlayer {
+    self.activePlayerController = nil;
+    self.dismissingPlayer = NO;
+    if (self.pendingFinishReason == MPMovieFinishReasonPlaybackError) {
+        [self showPlaybackError:self.pendingPlaybackError.localizedDescription ?: @"系统播放器无法播放该 HLS 流，请检查 Emby 转码日志"];
     } else if (!self.playerBecamePlayable) {
         self.statusLabel.text = @"播放器未取得可播放数据";
     }
+    self.pendingPlaybackError = nil;
+}
+
+- (void)movieFinished:(NSNotification *)notification {
+    MPMoviePlayerController *player = notification.object;
+    if (player != self.activePlayerController.moviePlayer || self.dismissingPlayer) return;
+    self.dismissingPlayer = YES;
+    self.pendingFinishReason = [notification.userInfo[MPMoviePlayerPlaybackDidFinishReasonUserInfoKey] integerValue];
+    self.pendingPlaybackError = notification.userInfo[@"error"];
+    [self removePlayerObserversForPlayer:player];
+    [player stop];
+    [self dismissMoviePlayerViewControllerAnimated];
 }
 
 - (void)showPlaybackError:(NSString *)message {
@@ -179,6 +206,22 @@
     [alert show];
 }
 
-- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (self.dismissingPlayer) [self finishDismissingPlayer];
+}
+
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    if (!self.fetchingStream || !(self.isMovingFromParentViewController || self.isBeingDismissed || self.navigationController.isBeingDismissed)) return;
+    ++self.playRequestGeneration;
+    self.fetchingStream = NO;
+}
+
+- (void)dealloc {
+    ++self.playRequestGeneration;
+    [self removePlayerObserversForPlayer:self.activePlayerController.moviePlayer];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
 
 @end

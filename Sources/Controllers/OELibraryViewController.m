@@ -4,6 +4,7 @@
 #import "Models/OEEmbyItem.h"
 #import "Controllers/OEPosterWallViewController.h"
 #import "Controllers/OELoginViewController.h"
+#import "Views/OEItemCell.h"
 #import "Constants.h"
 
 @interface OELibraryViewController ()
@@ -25,7 +26,7 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
-    self.tableView.rowHeight = 56;
+    self.tableView.rowHeight = 112;
     [self applyTheme];
     [self.view addSubview:self.tableView];
 
@@ -112,21 +113,15 @@
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     static NSString *ID = @"OELibraryCell";
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
+    OEItemCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:ID];
+        cell = [[OEItemCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     }
+    cell.compactLayout = NO;
     OEEmbyItem *item = self.libraries[indexPath.row];
-    cell.backgroundColor = [OETheme cellColor];
-    cell.textLabel.text = item.name ?: @"未命名媒体库";
-    cell.textLabel.textColor = [OETheme primaryTextColor];
-    cell.textLabel.font = [UIFont boldSystemFontOfSize:16];
-    cell.textLabel.backgroundColor = [UIColor clearColor];
-    cell.detailTextLabel.text = [self subtitleForLibrary:item];
-    cell.detailTextLabel.textColor = [OETheme secondaryTextColor];
-    cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
-    cell.detailTextLabel.backgroundColor = [UIColor clearColor];
+    [cell configureWithItem:item];
+    cell.detailLabel.text = [self subtitleForLibrary:item];
     return cell;
 }
 

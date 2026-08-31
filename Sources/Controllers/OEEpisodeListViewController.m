@@ -33,7 +33,7 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
-    self.tableView.rowHeight = 60;
+    self.tableView.rowHeight = 140;
     [self applyTheme];
     [self.view addSubview:self.tableView];
 
@@ -107,7 +107,7 @@
     static NSString *ID = @"EpisodeCell";
     OEItemCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) cell = [[OEItemCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
-    cell.compactLayout = YES; // rowHeight is 60 here
+    cell.episodeLayout = YES;
     OEEmbyItem *it = self.episodes[indexPath.row];
     [cell configureWithItem:it];
     NSString *se = @"";
