@@ -74,6 +74,7 @@
     if ([sn isKindOfClass:[NSNumber class]]) it.seasonNumber = [sn integerValue];
     NSNumber *en = [dict objectForKey:@"IndexNumber"];
     if ([en isKindOfClass:[NSNumber class]]) it.episodeNumber = [en integerValue];
+    it.indexNumber = it.episodeNumber;
     return it;
 }
 

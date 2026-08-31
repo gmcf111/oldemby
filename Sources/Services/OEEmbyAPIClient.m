@@ -192,7 +192,10 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
     OEServerConfig *c = [OEServerConfig sharedConfig];
     if (!c.userId) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }
     NSString *path = [NSString stringWithFormat:@"/Users/%@/Views", c.userId];
-    [self GET:path params:nil completion:^(id result, NSError *error){
+    // PrimaryImageAspectRatio lets the library home draw the full-width cover
+    // at the item's real aspect ratio.
+    NSDictionary *params = @{@"Fields": @"PrimaryImageAspectRatio", @"ImageTypeLimit": @"1"};
+    [self GET:path params:params completion:^(id result, NSError *error){
         if (error) { if (completion) completion(nil, error); return; }
         [self parseItemsFromResult:result completion:completion];
     }];
@@ -250,6 +253,19 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
     }];
 }
 
+- (void)fetchSeasonsForSeries:(NSString *)seriesId completion:(OEAPICompletion)completion {
+    OEServerConfig *c = [OEServerConfig sharedConfig];
+    if (!c.userId) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }
+    NSString *path = [NSString stringWithFormat:@"/Shows/%@/Seasons", seriesId];
+    NSDictionary *params = @{@"UserId": c.userId,
+                             @"Fields": @"PrimaryImageAspectRatio,Overview,RunTimeTicks",
+                             @"ImageTypeLimit": @"1"};
+    [self GET:path params:params completion:^(id result, NSError *error){
+        if (error) { if (completion) completion(nil, error); return; }
+        [self parseItemsFromResult:result completion:completion];
+    }];
+}
+
 #pragma mark - Playback
 
 - (void)fetchPlaybackInfoForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion {
@@ -270,9 +286,12 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
         NSString *msId = nil;
         NSString *url = [OETranscodeBuilder streamURLFromPlaybackInfoResponse:result itemId:itemId isAudio:isAudio host:[self baseURL] mediaSourceId:&msId];
         if (!url) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No stream URL in PlaybackInfo"}]); return; }
-        // Append transcode query if needed and URL not already contains it
+        // Append transcode query if needed and URL not already contains it.
+        // A server-generated HLS TranscodingUrl (master.m3u8) already carries
+        // every parameter and must not be rewritten.
         OETranscodeSettings *s = [OETranscodeSettings sharedSettings];
-        if (!s.directPlay && [url rangeOfString:@"VideoCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound && [url rangeOfString:@"AudioCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound) {
+        BOOL isHLSURL = [url rangeOfString:@".m3u8" options:NSCaseInsensitiveSearch].location != NSNotFound;
+        if (!s.directPlay && !isHLSURL && [url rangeOfString:@"VideoCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound && [url rangeOfString:@"AudioCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound) {
             // A server may return a generic URL containing Static=true even
             // when the profile requested transcoding.  Replace that flag
             // before adding codec parameters instead of sending contradictory

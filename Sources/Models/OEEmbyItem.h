@@ -30,6 +30,8 @@ typedef NS_ENUM(NSInteger, OEEmbyItemType) {
 @property (nonatomic, copy) NSString *embeddedLyricsFormat;
 @property (nonatomic, assign) NSInteger seasonNumber;
 @property (nonatomic, assign) NSInteger episodeNumber;
+// Raw IndexNumber: episode number for Episodes, season number for Seasons.
+@property (nonatomic, assign) NSInteger indexNumber;
 
 + (instancetype)itemWithDictionary:(NSDictionary *)dict;
 + (OEEmbyItemType)typeFromString:(NSString *)s;

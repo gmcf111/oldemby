@@ -56,13 +56,16 @@
         @"MaxStreamingBitrate": @(vbr),
         @"DirectPlayProfiles": @[],
         @"TranscodingProfiles": @[
+            // HLS is the only transcode delivery iOS 6 MPMoviePlayer reliably
+            // plays; raw http MPEG-TS progressive streams stall on it. Mirrors
+            // Emby web: Container=ts segments carried over the hls protocol.
             @{
                 @"Container": @"ts",
                 @"Type": @"Video",
                 @"VideoCodec": @"h264",
                 @"AudioCodec": @"aac",
                 @"Context": @"Streaming",
-                @"Protocol": @"http",
+                @"Protocol": @"hls",
                 @"MaxAudioChannels": @"2",
                 @"MinSegments": @"1",
                 @"BreakOnNonKeyFrames": @NO

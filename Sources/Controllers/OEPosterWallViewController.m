@@ -4,7 +4,7 @@
 #import "Services/OEEmbyAPIClient.h"
 #import "Models/OEEmbyItem.h"
 #import "Controllers/OEVideoDetailViewController.h"
-#import "Controllers/OEEpisodeListViewController.h"
+#import "Controllers/OESeasonListViewController.h"
 #import "Constants.h"
 #import <math.h>
 
@@ -54,14 +54,10 @@
 }
 
 - (CGFloat)currentRowHeight {
-    CGSize size = self.view.bounds.size;
-    if (size.width < 1) size.width = self.tableView.bounds.size.width;
-    if (size.width < 1) size.width = [UIScreen mainScreen].bounds.size.width;
-    BOOL isPad = (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
-    if (isPad && size.height > 1) {
-        return [OEPosterGridCell rowHeightForViewSize:size];
-    }
-    return [OEPosterGridCell rowHeightForTableWidth:size.width];
+    // Row height must be computed with the exact same column count that
+    // cellForRowAtIndexPath will hand to the cell, otherwise poster slots and
+    // row bounds disagree and posters/labels overlap on iPad landscape.
+    return [OEPosterGridCell rowHeightForColumns:[self currentColumnCount] tableWidth:self.tableView.bounds.size.width];
 }
 
 - (void)viewDidLoad {
@@ -162,7 +158,8 @@
     if (index < 0 || index >= (NSInteger)self.items.count) return;
     OEEmbyItem *item = self.items[index];
     if (item.itemType == OEEmbyItemTypeSeries) {
-        [self.navigationController pushViewController:[[OEEpisodeListViewController alloc] initWithSeries:item] animated:YES];
+        // Series drill down through the season list first, like Emby web.
+        [self.navigationController pushViewController:[[OESeasonListViewController alloc] initWithSeries:item] animated:YES];
     } else {
         [self.navigationController pushViewController:[[OEVideoDetailViewController alloc] initWithItem:item] animated:YES];
     }
@@ -190,7 +187,7 @@
     NSInteger cols = [self currentColumnCount];
     if (cols < 1) cols = 1;
     NSInteger startIndex = indexPath.row * cols;
-    [cell configureWithItems:self.items startIndex:startIndex target:self action:@selector(posterTapped:)];
+    [cell configureWithItems:self.items startIndex:startIndex columns:cols target:self action:@selector(posterTapped:)];
     return cell;
 }
 

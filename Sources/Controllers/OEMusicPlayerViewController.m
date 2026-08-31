@@ -9,8 +9,6 @@
 #import <math.h>
 
 @interface OEMusicPlayerViewController ()
-@property (nonatomic, strong) OEEmbyItem *initialItem;
-@property (nonatomic, strong) NSArray *initialPlaylist;
 @property (nonatomic, strong) UIImageView *artworkView;
 @property (nonatomic, strong) UILabel *titleLabel;
 @property (nonatomic, strong) UILabel *artistLabel;
@@ -31,11 +29,10 @@
 @implementation OEMusicPlayerViewController
 
 - (instancetype)initWithItem:(OEEmbyItem *)item playlist:(NSArray *)playlist {
-    if ((self = [super init])) {
-        _initialItem = item;
-        _initialPlaylist = [playlist copy];
-        _highlightedLyricsIndex = NSNotFound;
-    }
+    // item/playlist are accepted for API compatibility but deliberately not
+    // stored: opening the player must not start or restart playback.
+    self = [super init];
+    if (self) _highlightedLyricsIndex = NSNotFound;
     return self;
 }
 
@@ -113,9 +110,6 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshProgress) name:kNotificationMusicPlaybackProgressChanged object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyThemeAndRefresh) name:kNotificationThemeDidChange object:nil];
     [self applyTheme];
-    if (![OEMusicPlaybackManager sharedManager].active && self.initialItem) {
-        [[OEMusicPlaybackManager sharedManager] playItem:self.initialItem playlist:self.initialPlaylist];
-    }
     [self refresh];
 }
 

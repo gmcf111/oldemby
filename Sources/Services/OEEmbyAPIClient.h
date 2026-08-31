@@ -23,6 +23,8 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 - (void)fetchItemsInParent:(NSString *)parentId itemTypes:(NSString *)types startIndex:(NSInteger)start limit:(NSInteger)limit sortBy:(NSString *)sortBy sortOrder:(NSString *)sortOrder recursive:(BOOL)recursive completion:(OEAPICompletion)completion;
 // Songs of a MusicArtist (artists are virtual nodes, ParentId does not work -> filter by ArtistIds)
 - (void)fetchSongsForArtist:(NSString *)artistId startIndex:(NSInteger)start limit:(NSInteger)limit completion:(OEAPICompletion)completion;
+// Seasons of a series (GET /Shows/{seriesId}/Seasons).
+- (void)fetchSeasonsForSeries:(NSString *)seriesId completion:(OEAPICompletion)completion;
 
 // Playback
 - (void)fetchPlaybackInfoForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;

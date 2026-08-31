@@ -12,5 +12,7 @@
 @property (nonatomic, assign) BOOL episodeLayout;
 
 - (void)configureWithItem:(OEEmbyItem *)item;
+// episodeNumber > 0 renders a bold "N." prefix before the name (Emby-web style).
+- (void)configureWithItem:(OEEmbyItem *)item episodeNumber:(NSInteger)episodeNumber;
 
 @end

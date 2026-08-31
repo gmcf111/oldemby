@@ -11,6 +11,7 @@ typedef NS_ENUM(NSInteger, OEThemeMode) {
 // kNotificationThemeDidChange so live views can re-apply colors.
 + (OEThemeMode)themeMode;
 + (void)setThemeMode:(OEThemeMode)mode;
++ (BOOL)isLight;
 
 + (UIColor *)libraryBackgroundColor;
 + (UIColor *)navigationBarColor;

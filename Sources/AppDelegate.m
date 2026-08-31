@@ -22,7 +22,8 @@
     [[AVAudioSession sharedInstance] setActive:YES error:nil];
     [[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
 
-    UIColor *tabIconColor = [UIColor whiteColor];
+    // White icons vanish on the light silver tab bar; match the theme.
+    UIColor *tabIconColor = [OETheme isLight] ? [UIColor colorWithWhite:0.35 alpha:1.0] : [UIColor whiteColor];
     OELibraryViewController *videoVC = [[OELibraryViewController alloc] init];
     videoVC.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"影视" image:[OEIconFactory imageForIconType:OEIconTypeVideo size:CGSizeMake(30, 30) color:tabIconColor] tag:0];
 

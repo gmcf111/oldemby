@@ -6,7 +6,12 @@
 
 static const CGFloat kOuterPadding = 12.0;
 static const CGFloat kColumnSpacing = 10.0;
+// Poster image area only; the name label height is budgeted separately so a
+// two-line title can never overflow into the next row.
 static const CGFloat kLabelHeight = 34.0;
+static const CGFloat kLabelGap = 3.0;
+// Hard cap on the number of slots a cell can host; iPad landscape 10 columns.
+static const NSInteger kMaxColumns = 10;
 
 // One tappable poster slot: image on top, 2-line name label below.
 @interface OEPosterSlot : UIControl
@@ -26,7 +31,7 @@ static const CGFloat kLabelHeight = 34.0;
         [self addSubview:_posterView];
 
         _nameLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-        _nameLabel.font = [UIFont systemFontOfSize:12];
+        _nameLabel.font = [UIFont systemFontOfSize:11];
         _nameLabel.numberOfLines = 2;
         _nameLabel.textAlignment = NSTextAlignmentCenter;
         _nameLabel.backgroundColor = [UIColor clearColor];
@@ -38,9 +43,14 @@ static const CGFloat kLabelHeight = 34.0;
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat w = self.bounds.size.width;
-    CGFloat posterH = self.bounds.size.height - kLabelHeight - 4;
-    self.posterView.frame = CGRectMake(0, 0, w, posterH);
-    self.nameLabel.frame = CGRectMake(0, posterH + 4, w, kLabelHeight);
+    CGFloat h = self.bounds.size.height;
+    // Guarantee the poster + label always fit inside the slot even if the
+    // slot was laid out with a stale frame: clamp heights to bounds first.
+    CGFloat labelH = MIN(kLabelHeight, h * 0.35);
+    CGFloat posterH = h - labelH - kLabelGap;
+    if (posterH < 10) posterH = MAX(10, h - labelH);
+    self.posterView.frame = CGRectMake(0, 0, w, MAX(1, posterH));
+    self.nameLabel.frame = CGRectMake(0, MAX(1, posterH) + kLabelGap, w, labelH);
 }
 
 - (void)applyTheme {
@@ -62,87 +72,86 @@ static const CGFloat kLabelHeight = 34.0;
 @end
 
 @interface OEPosterGridCell ()
-@property (nonatomic, strong) NSArray *slots; // OEPosterSlot x columnCount
+// Slots laid out for a specific column count; lazily grown up to kMaxColumns.
+@property (nonatomic, strong) NSMutableArray *slots;
+@property (nonatomic, assign) NSInteger configuredColumns;
 @end
-
-static const NSInteger kMaxColumns = 6;
 
 @implementation OEPosterGridCell
 
 + (NSInteger)columnCountForViewSize:(CGSize)size {
     BOOL isPad = (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
     if (!isPad) return 3;
-    // iPad: 横屏每行 6 个（宽 > 高），竖屏每行 4 个（高 > 宽），自然形成
-    // 横屏约 4.5 行、竖屏约 6.5 行的半行露出效果，满足用户“海报太大”问题的密度需求。
-    return size.width > size.height ? 6 : 4;
+    // iPad: landscape packs 10 per row so posters stay small, portrait 6.
+    return size.width > size.height ? 10 : 6;
 }
 
 + (NSInteger)columnCountForTableWidth:(CGFloat)width {
     BOOL isPad = (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
     if (!isPad) return 3;
-    // 优先用 window 尺寸（与 view.bounds 同步，旋转时最及时）
+    // Prefer the window size (tracks rotation immediately).
     UIWindow *win = [[UIApplication sharedApplication] keyWindow];
     if (win) {
         CGSize winSize = win.bounds.size;
         if (winSize.width > 0 && winSize.height > 0) {
-            if (winSize.width > winSize.height) return 6;
-            if (winSize.width < winSize.height) return 4;
+            if (winSize.width > winSize.height) return 10;
+            if (winSize.width < winSize.height) return 6;
         }
     }
     UIInterfaceOrientation orient = [[UIApplication sharedApplication] statusBarOrientation];
-    if (UIInterfaceOrientationIsLandscape(orient)) return 6;
-    if (UIInterfaceOrientationIsPortrait(orient)) return 4;
-    // 未知方向时回退到尺寸判断；iOS 8+ screen 已旋转，iOS 6-7 始终竖屏
+    if (UIInterfaceOrientationIsLandscape(orient)) return 10;
+    if (UIInterfaceOrientationIsPortrait(orient)) return 6;
+    // Unknown orientation: fall back to the screen size; iOS 6-7 screens are
+    // always portrait, iOS 8+ rotate.
     CGSize screen = [UIScreen mainScreen].bounds.size;
-    if (screen.width > screen.height) return 6;
-    // 宽度阈值兜底：常规 iPad 横屏 1024 / 竖屏 768；未知时默认竖屏 4 列
+    if (screen.width > screen.height) return 10;
     if (width >= 900) {
-        // 1024 可能是常规 iPad 横屏或 iPad Pro 竖屏，优先按竖屏 4 处理避免过大误判
-        // 只有明显大于 1024 时才认为是横屏
-        if (width > 1024) return 6;
-        // 常规 iPad 横屏 1024 时，若 screen 高度也 >=1024 说明是 iPad Pro 竖屏歧义，保守返回 4
-        if (width == 1024 && screen.height >= 1024) return 4;
-        return 6;
+        if (width > 1024) return 10;
+        if (width == 1024 && screen.height >= 1024) return 6;
+        return 10;
     }
-    return 4;
+    return 6;
 }
 
 + (NSInteger)columnCount {
-    // 兼容旧调用：优先用 window/方向，其次用屏幕尺寸
     BOOL isPad = (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
     if (isPad) {
         UIWindow *win = [[UIApplication sharedApplication] keyWindow];
         if (win) {
             CGSize winSize = win.bounds.size;
-            if (winSize.width > winSize.height) return 6;
-            if (winSize.width < winSize.height) return 4;
+            if (winSize.width > winSize.height) return 10;
+            if (winSize.width < winSize.height) return 6;
         }
         UIInterfaceOrientation orient = [[UIApplication sharedApplication] statusBarOrientation];
-        if (UIInterfaceOrientationIsLandscape(orient)) return 6;
-        if (UIInterfaceOrientationIsPortrait(orient)) return 4;
+        if (UIInterfaceOrientationIsLandscape(orient)) return 10;
+        if (UIInterfaceOrientationIsPortrait(orient)) return 6;
         CGSize screen = [UIScreen mainScreen].bounds.size;
-        if (screen.width > screen.height) return 6;
-        return 4;
+        if (screen.width > screen.height) return 10;
+        return 6;
     }
     return 3;
 }
 
-+ (CGFloat)posterWidthForTableWidth:(CGFloat)width {
-    NSInteger columns = [self columnCountForTableWidth:width];
++ (CGFloat)posterWidthForColumns:(NSInteger)columns width:(CGFloat)width {
     if (columns < 1) columns = 3;
     return floor((width - 2 * kOuterPadding - (columns - 1) * kColumnSpacing) / columns);
 }
 
++ (CGFloat)posterWidthForTableWidth:(CGFloat)width {
+    return [self posterWidthForColumns:[self columnCountForTableWidth:width] width:width];
+}
+
++ (CGFloat)rowHeightForColumns:(NSInteger)columns tableWidth:(CGFloat)width {
+    CGFloat posterW = [self posterWidthForColumns:columns width:width];
+    return kOuterPadding + posterW * 1.5 + kLabelGap + kLabelHeight + kOuterPadding;
+}
+
 + (CGFloat)rowHeightForTableWidth:(CGFloat)width {
-    CGFloat posterH = [self posterWidthForTableWidth:width] * 1.5;
-    return kOuterPadding + posterH + 4 + kLabelHeight + kOuterPadding;
+    return [self rowHeightForColumns:[self columnCountForTableWidth:width] tableWidth:width];
 }
 
 + (CGFloat)rowHeightForViewSize:(CGSize)size {
-    NSInteger columns = [self columnCountForViewSize:size];
-    CGFloat posterW = floor((size.width - 2 * kOuterPadding - (columns - 1) * kColumnSpacing) / columns);
-    CGFloat posterH = posterW * 1.5;
-    return kOuterPadding + posterH + 4 + kLabelHeight + kOuterPadding;
+    return [self rowHeightForColumns:[self columnCountForViewSize:size] tableWidth:size.width];
 }
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
@@ -150,26 +159,20 @@ static const NSInteger kMaxColumns = 6;
         self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.backgroundColor = [UIColor clearColor];
         self.contentView.backgroundColor = [UIColor clearColor];
-        NSMutableArray *slots = [NSMutableArray array];
-        for (NSInteger i = 0; i < kMaxColumns; ++i) {
-            OEPosterSlot *slot = [[OEPosterSlot alloc] initWithFrame:CGRectZero];
-            [self.contentView addSubview:slot];
-            [slots addObject:slot];
-        }
-        _slots = slots;
+        _slots = [NSMutableArray array];
+        _configuredColumns = 0;
     }
     return self;
 }
 
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    CGFloat width = self.contentView.bounds.size.width;
-    CGFloat posterW = [OEPosterGridCell posterWidthForTableWidth:width];
-    CGFloat slotH = [OEPosterGridCell rowHeightForTableWidth:width] - 2 * kOuterPadding;
-    for (NSInteger i = 0; i < self.slots.count; ++i) {
-        OEPosterSlot *slot = self.slots[i];
-        slot.frame = CGRectMake(kOuterPadding + i * (posterW + kColumnSpacing), kOuterPadding, posterW, slotH);
+- (OEPosterSlot *)slotAtIndex:(NSInteger)index {
+    while (self.slots.count <= (NSUInteger)index) {
+        OEPosterSlot *slot = [[OEPosterSlot alloc] initWithFrame:CGRectZero];
+        slot.hidden = YES;
+        [self.contentView addSubview:slot];
+        [self.slots addObject:slot];
     }
+    return self.slots[index];
 }
 
 - (void)prepareForReuse {
@@ -180,21 +183,40 @@ static const NSInteger kMaxColumns = 6;
         slot.posterView.image = nil;
         slot.nameLabel.text = nil;
     }
+    self.configuredColumns = 0;
 }
 
-- (void)configureWithItems:(NSArray *)items startIndex:(NSInteger)startIndex target:(id)target action:(SEL)action {
+- (void)layoutSlotsWithColumns:(NSInteger)columns {
     CGFloat width = self.contentView.bounds.size.width;
     if (width < 1) width = self.bounds.size.width;
-    NSInteger cols = [OEPosterGridCell columnCountForTableWidth:width];
-    if (cols < 1) cols = 3;
-    if (cols > (NSInteger)self.slots.count) cols = self.slots.count;
-    for (NSInteger i = 0; i < (NSInteger)self.slots.count; ++i) {
-        OEPosterSlot *slot = self.slots[i];
+    if (columns < 1) columns = 3;
+    if (columns > kMaxColumns) columns = kMaxColumns;
+    CGFloat posterW = [OEPosterGridCell posterWidthForColumns:columns width:width];
+    CGFloat slotH = [OEPosterGridCell rowHeightForColumns:columns tableWidth:width] - 2 * kOuterPadding;
+    for (NSInteger i = 0; i < columns; ++i) {
+        OEPosterSlot *slot = [self slotAtIndex:i];
+        slot.frame = CGRectMake(kOuterPadding + i * (posterW + kColumnSpacing), kOuterPadding, posterW, MAX(1, slotH));
+    }
+    // Hide any slot beyond the current column count.
+    for (NSInteger i = columns; i < (NSInteger)self.slots.count; ++i) {
+        self.slots[i].hidden = YES;
+    }
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [self layoutSlotsWithColumns:self.configuredColumns];
+}
+
+- (void)configureWithItems:(NSArray *)items startIndex:(NSInteger)startIndex columns:(NSInteger)columns target:(id)target action:(SEL)action {
+    CGFloat width = self.contentView.bounds.size.width;
+    if (width < 1) width = self.bounds.size.width;
+    if (columns < 1) columns = [OEPosterGridCell columnCountForTableWidth:width];
+    if (columns > kMaxColumns) columns = kMaxColumns;
+    self.configuredColumns = columns;
+    for (NSInteger i = 0; i < columns; ++i) {
+        OEPosterSlot *slot = [self slotAtIndex:i];
         [slot removeTarget:nil action:NULL forControlEvents:UIControlEventTouchUpInside];
-        if (i >= cols) {
-            slot.hidden = YES;
-            continue;
-        }
         NSInteger index = startIndex + i;
         if (index < (NSInteger)items.count) {
             OEEmbyItem *item = items[index];

@@ -5,7 +5,8 @@
 
 + (OEThemeMode)themeMode {
     NSNumber *saved = [[NSUserDefaults standardUserDefaults] objectForKey:kDefaultsThemeMode];
-    if (![saved isKindOfClass:[NSNumber class]]) return OEThemeModeDark;
+    // Fresh installs start in light mode; an explicitly saved choice wins.
+    if (![saved isKindOfClass:[NSNumber class]]) return OEThemeModeLight;
     return [saved integerValue] == OEThemeModeLight ? OEThemeModeLight : OEThemeModeDark;
 }
 
@@ -18,23 +19,22 @@
 
 + (BOOL)isLight { return [self themeMode] == OEThemeModeLight; }
 
-// iOS 6-era neutrals: silver bars in light mode, warm espresso in dark mode.
-// Deliberately neither the default blue-gray nor pure black.
+// Emby brand green (#52B54B). Dark mode uses only gray / green / black.
 + (UIColor *)libraryBackgroundColor {
     return [self isLight] ? [UIColor colorWithWhite:0.93 alpha:1.0]
-                          : [UIColor colorWithRed:0.115 green:0.100 blue:0.090 alpha:1.0];
+                          : [UIColor colorWithWhite:0.11 alpha:1.0];
 }
 + (UIColor *)navigationBarColor {
-    return [self isLight] ? [UIColor colorWithRed:0.82 green:0.83 blue:0.86 alpha:1.0]
-                          : [UIColor colorWithRed:0.255 green:0.220 blue:0.195 alpha:1.0];
+    return [self isLight] ? [UIColor colorWithWhite:0.83 alpha:1.0]
+                          : [UIColor colorWithWhite:0.16 alpha:1.0];
 }
 + (UIColor *)tabBarColor {
-    return [self isLight] ? [UIColor colorWithRed:0.80 green:0.81 blue:0.84 alpha:1.0]
-                          : [UIColor colorWithRed:0.225 green:0.195 blue:0.175 alpha:1.0];
+    return [self isLight] ? [UIColor colorWithWhite:0.81 alpha:1.0]
+                          : [UIColor colorWithWhite:0.14 alpha:1.0];
 }
 + (UIColor *)cellColor {
     return [self isLight] ? [UIColor whiteColor]
-                          : [UIColor colorWithRed:0.175 green:0.150 blue:0.135 alpha:1.0];
+                          : [UIColor colorWithWhite:0.18 alpha:1.0];
 }
 + (UIColor *)primaryTextColor {
     return [self isLight] ? [UIColor colorWithWhite:0.13 alpha:1.0]
@@ -44,14 +44,15 @@
     return [self isLight] ? [UIColor colorWithWhite:0.46 alpha:1.0]
                           : [UIColor colorWithWhite:0.63 alpha:1.0];
 }
-+ (UIColor *)accentColor { return [UIColor colorWithRed:0.78 green:0.36 blue:0.12 alpha:1.0]; }
+// #52B54B: Emby green, matches the app icon.
++ (UIColor *)accentColor { return [UIColor colorWithRed:0.322 green:0.710 blue:0.294 alpha:1.0]; }
 + (UIColor *)separatorColor {
     return [self isLight] ? [UIColor colorWithWhite:0.80 alpha:1.0]
                           : [UIColor colorWithWhite:0.23 alpha:1.0];
 }
 + (UIColor *)imagePlaceholderColor {
     return [self isLight] ? [UIColor colorWithWhite:0.88 alpha:1.0]
-                          : [UIColor colorWithRed:0.090 green:0.075 blue:0.065 alpha:1.0];
+                          : [UIColor colorWithWhite:0.09 alpha:1.0];
 }
 
 + (void)applyToNavigationBar:(UINavigationBar *)bar {
