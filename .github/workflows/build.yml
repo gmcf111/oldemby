@@ -174,22 +174,20 @@ jobs:
             exit 1
           fi
 
-          # theos/sdks iPhoneOS9.3.sdk: libSystem.tbd re-exports
-          # /usr/lib/system/liblaunch.dylib but the archive omits liblaunch.tbd,
-          # so ld fails with "file not found: /usr/lib/system/liblaunch.dylib".
-          # Ship a minimal link-time stub; the real dylib exists on device.
-          LAUNCH_TBD="$THEOS/sdks/iPhoneOS9.3.sdk/usr/lib/system/liblaunch.tbd"
-          if [ ! -f "$LAUNCH_TBD" ]; then
-            echo "Creating liblaunch.tbd stub (missing from theos/sdks archive)"
-            printf '%s\n' \
-              '---' \
-              'archs:                 [ armv7, armv7s, arm64 ]' \
-              'platform:              ios' \
-              'install-name:          /usr/lib/system/liblaunch.dylib' \
-              'current-version:       442.1.1' \
-              'compatibility-version: 1' \
-              '...' > "$LAUNCH_TBD"
-          fi
+          # The theos/sdks .tbd stubs have two export gaps that break the armv7
+          # link: a missing liblaunch.tbd, and libsystem_platform.tbd omitting
+          # the public _memset/_memcpy/_bzero aliases (it exports only the
+          # internal __platform_* names). See tools/patch_sdk_tbd.py for the
+          # full explanation. Idempotent, so a cached SDK is fine.
+          python3 tools/patch_sdk_tbd.py "$THEOS/sdks/iPhoneOS9.3.sdk"
+
+          # Gate: _memset must resolve, or the link fails later with a much
+          # less obvious "Undefined symbols for architecture armv7".
+          PLATFORM_TBD="$THEOS/sdks/iPhoneOS9.3.sdk/usr/lib/system/libsystem_platform.tbd"
+          tr ',[]' '\n' < "$PLATFORM_TBD" | tr -d ' ' | grep -qx '_memset' \
+            || { echo "::error::libsystem_platform.tbd still lacks _memset"; exit 1; }
+          [ -f "$THEOS/sdks/iPhoneOS9.3.sdk/usr/lib/system/liblaunch.tbd" ] \
+            || { echo "::error::liblaunch.tbd stub missing"; exit 1; }
           echo "SDK setup complete"
 
       - name: Generate app icons
