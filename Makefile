@@ -20,6 +20,7 @@ OldEmby_FILES = \
 	Sources/Controllers/OEMusicPlayerViewController.m \
 	Sources/Controllers/OERootTabBarController.m \
 	Sources/Models/OEEmbyItem.m \
+	Sources/Models/OELyricsLine.m \
 	Sources/Models/OETranscodeSettings.m \
 	Sources/Models/OEServerConfig.m \
 	Sources/Services/OEEmbyAPIClient.m \

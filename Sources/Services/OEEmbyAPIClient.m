@@ -309,6 +309,24 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
     }];
 }
 
+- (void)fetchLyricsForItem:(NSString *)itemId completion:(OEAPICompletion)completion {
+    if (!itemId.length) {
+        if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Missing audio item ID"}]);
+        return;
+    }
+    // Emby 4.x uses /Audio/{id}/Lyrics; several older releases use the
+    // generic item route. Treat only a 404 as a compatibility fallback.
+    NSString *audioPath = [NSString stringWithFormat:@"/Audio/%@/Lyrics", itemId];
+    [self GET:audioPath params:nil completion:^(id result, NSError *error) {
+        if (!error || error.code != 404) {
+            if (completion) completion(result, error);
+            return;
+        }
+        NSString *itemPath = [NSString stringWithFormat:@"/Items/%@/Lyrics", itemId];
+        [self GET:itemPath params:nil completion:completion];
+    }];
+}
+
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width {
     return [self imageURLForItem:item width:width height:0];
 }

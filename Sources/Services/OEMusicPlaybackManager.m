@@ -69,7 +69,10 @@
     self.artwork = nil;
     self.progress = 0;
     self.currentTime = 0;
-    self.duration = 0;
+    // Seed the duration from the item metadata: a transcoded HTTP stream
+    // usually reports an indefinite AVPlayerItem duration, and without this
+    // fallback the progress slider can never move or be dragged.
+    self.duration = self.currentItem.runTimeTicks > 0 ? (NSTimeInterval)self.currentItem.runTimeTicks / 10000000.0 : 0;
     self.state = OEMusicPlaybackStateLoading;
     self.statusText = @"正在获取播放地址…";
     [self publishState];
@@ -156,10 +159,12 @@
     if (!self.player || self.seeking) return;
     CMTime current = self.player.currentTime;
     CMTime total = self.player.currentItem.duration;
-    if (CMTIME_IS_INVALID(total) || total.value == 0) return;
-    NSTimeInterval duration = CMTimeGetSeconds(total);
+    NSTimeInterval duration = CMTIME_IS_INVALID(total) ? 0 : CMTimeGetSeconds(total);
+    // Transcoded streams often carry an indefinite duration; keep the
+    // RunTimeTicks-derived value seeded in loadCurrentItem in that case.
+    if (!isfinite(duration) || duration <= 0) duration = self.duration;
     NSTimeInterval currentTime = CMTimeGetSeconds(current);
-    if (!isfinite(duration) || duration <= 0 || !isfinite(currentTime)) return;
+    if (duration <= 0 || !isfinite(currentTime)) return;
     self.duration = duration;
     self.currentTime = MAX(0, currentTime);
     self.progress = MIN(1.0, MAX(0.0, self.currentTime / duration));
@@ -229,12 +234,14 @@
     if (!self.player || self.duration <= 0) { if (completion) completion(NO); return; }
     self.seeking = YES;
     CMTime target = CMTimeMakeWithSeconds(MAX(0, MIN(1, progress)) * self.duration, 600);
-    __weak typeof(self) weakSelf = self;
-    [self.player seekToTime:target completionHandler:^(BOOL finished) {
-        weakSelf.seeking = NO;
-        [weakSelf updateProgress];
-        if (completion) completion(finished);
-    }];
+    // -seekToTime:completionHandler: is iOS 7+. Calling it on an iOS 6
+    // device causes an unrecognized-selector crash exactly when the user
+    // releases the full-player slider. The synchronous selector is available
+    // on the deployment target and is sufficient for this UI.
+    [self.player seekToTime:target];
+    self.seeking = NO;
+    [self updateProgress];
+    if (completion) completion(YES);
 }
 
 - (void)itemDidFinish:(NSNotification *)notification {

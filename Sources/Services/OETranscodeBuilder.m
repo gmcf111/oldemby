@@ -1,4 +1,5 @@
 #import "OETranscodeBuilder.h"
+#import "Models/OEServerConfig.h"
 
 @implementation OETranscodeBuilder
 
@@ -36,8 +37,9 @@
             // bitrate is actually applied even for AAC/MP3 source files.
             @"DirectPlayProfiles": @[],
             @"TranscodingProfiles": @[
-                @{@"Container": @"mp3", @"Type": @"Audio", @"AudioCodec": @"mp3", @"Context": @"Streaming", @"Protocol": @"http"},
-                @{@"Container": @"aac", @"Type": @"Audio", @"AudioCodec": @"aac", @"Context": @"Streaming", @"Protocol": @"http"}
+                // Keep a single MP3 profile. Advertising AAC lets Emby select
+                // ADTS AAC instead, which is a common iOS 6 AVPlayer failure.
+                @{@"Container": @"mp3", @"Type": @"Audio", @"AudioCodec": @"mp3", @"Context": @"Streaming", @"Protocol": @"http"}
             ],
             @"CodecProfiles": @[],
             @"ContainerProfiles": @[],
@@ -121,7 +123,9 @@
 + (NSString *)transcodeQueryStringForSettings:(OETranscodeSettings *)s isAudio:(BOOL)isAudio {
     if (s.directPlay) return @"Static=true";
     if (isAudio) {
-        return [NSString stringWithFormat:@"AudioCodec=aac&MaxAudioBitrate=%ld&Container=aac&Static=false", (long)s.maxAudioBitrate];
+        // MP3, not ADTS AAC: iOS 6 AVPlayer is unreliable on headerless AAC
+        // progressive streams but plays MP3 from any Emby transcode.
+        return [NSString stringWithFormat:@"AudioCodec=mp3&MaxAudioBitrate=%ld&Container=mp3&Static=false", (long)s.maxAudioBitrate];
     }
     NSInteger w = [s widthForResolution];
     NSInteger h = [s heightForResolution];
@@ -171,6 +175,17 @@
     // generic /Videos/.../stream fallback is commonly progressive MP4 and may
     // stall forever while a live transcode is still being produced on iOS 6.
     if (!url.length && ![OETranscodeSettings sharedSettings].directPlay && !isAudio) return nil;
+    if (!url.length && ![OETranscodeSettings sharedSettings].directPlay && isAudio) {
+        // The universal endpoint is the audio endpoint guaranteed to honor a
+        // transcode request; /Audio/.../stream can return the source file
+        // untouched.  MP3 because iOS 6 AVPlayer chokes on ADTS AAC streams.
+        OEServerConfig *config = [OEServerConfig sharedConfig];
+        NSString *resolvedItemId = itemId ?: response[@"ItemId"] ?: @"";
+        if (!resolvedItemId.length) return nil;
+        url = [NSString stringWithFormat:@"/Audio/%@/universal?UserId=%@&DeviceId=%@&MaxStreamingBitrate=%ld&Container=mp3&AudioCodec=mp3",
+               resolvedItemId, config.userId ?: @"", config.deviceId ?: @"",
+               (long)[OETranscodeSettings sharedSettings].maxAudioBitrate];
+    }
     if (!url.length) {
         // Emby 4.x may return MediaSources with SupportsDirectStream etc,
         // but no URL -> build the appropriate audio/video stream endpoint.
@@ -182,7 +197,10 @@
         // This method takes no settings argument; the Static flag mirrors the
         // global preference the caller used when building the PlaybackInfo body.
         NSString *staticFlag = [OETranscodeSettings sharedSettings].directPlay ? @"Static=true" : @"Static=false";
-        url = [NSString stringWithFormat:@"/%@/%@/stream?MediaSourceId=%@&%@", resource, resolvedItemId, msId, staticFlag];
+        // An empty MediaSourceId query value makes some Emby versions reject
+        // the request outright - omit the key entirely in that case.
+        NSString *msParam = msId.length ? [NSString stringWithFormat:@"MediaSourceId=%@&", msId] : @"";
+        url = [NSString stringWithFormat:@"/%@/%@/stream?%@%@", resource, resolvedItemId, msParam, staticFlag];
     }
     // Ensure absolute URL
     if ([url hasPrefix:@"http"]) return url;

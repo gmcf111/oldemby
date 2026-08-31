@@ -42,6 +42,12 @@
     self.window.rootViewController = self.tabBarController;
     [self.window makeKeyAndVisible];
 
+    // Match the status bar and any already-created bars to the saved theme;
+    // the appearance proxy alone leaves iOS 6 bars in their default blue-gray.
+    [OETheme applyToBarsInView:self.window];
+    UIStatusBarStyle initialStyle = [OETheme themeMode] == OEThemeModeLight ? UIStatusBarStyleDefault : UIStatusBarStyleBlackOpaque;
+    [[UIApplication sharedApplication] setStatusBarStyle:initialStyle animated:NO];
+
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(themeDidChange) name:kNotificationThemeDidChange object:nil];
 
     NSString *token = [[NSUserDefaults standardUserDefaults] stringForKey:kDefaultsServerToken];
@@ -60,20 +66,14 @@
 }
 
 // Re-tint bars that were created before the theme changed (appearance
-// proxies only affect newly created views) and repaint the window.
+// proxies only affect newly created views) and repaint the window. Walking
+// the whole window catches every nav/tab bar no matter which tab or modal is
+// visible, and setNeedsDisplay inside the apply methods forces iOS 6 to
+// redraw instead of waiting for the next page change.
 - (void)themeDidChange {
     [OETheme applyApplicationAppearance];
     self.window.backgroundColor = [OETheme libraryBackgroundColor];
-    for (UIViewController *vc in self.tabBarController.viewControllers) {
-        if ([vc isKindOfClass:[UINavigationController class]]) {
-            [OETheme applyToNavigationBar:((UINavigationController *)vc).navigationBar];
-        }
-    }
-    [OETheme applyToTabBar:self.tabBarController.tabBar];
-    UIViewController *presented = self.tabBarController.presentedViewController;
-    if ([presented isKindOfClass:[UINavigationController class]]) {
-        [OETheme applyToNavigationBar:((UINavigationController *)presented).navigationBar];
-    }
+    [OETheme applyToBarsInView:self.window];
     // Status bar style is app-wide (Info.plist has no per-VC setting): keep it readable on the theme.
     UIStatusBarStyle style = [OETheme themeMode] == OEThemeModeLight ? UIStatusBarStyleDefault : UIStatusBarStyleBlackOpaque;
     [[UIApplication sharedApplication] setStatusBarStyle:style animated:YES];

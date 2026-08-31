@@ -1,6 +1,8 @@
 #import "OEMusicPlayerViewController.h"
 #import "Models/OEEmbyItem.h"
+#import "Models/OELyricsLine.h"
 #import "Services/OEMusicPlaybackManager.h"
+#import "Services/OEEmbyAPIClient.h"
 #import "Views/OETheme.h"
 #import "Views/OEIconFactory.h"
 #import "Constants.h"
@@ -13,6 +15,11 @@
 @property (nonatomic, strong) UILabel *titleLabel;
 @property (nonatomic, strong) UILabel *artistLabel;
 @property (nonatomic, strong) UILabel *statusLabel;
+@property (nonatomic, strong) UITableView *lyricsTable;
+@property (nonatomic, strong) UILabel *lyricsEmptyLabel;
+@property (nonatomic, strong) NSArray *lyrics;
+@property (nonatomic, copy) NSString *lyricsItemId;
+@property (nonatomic, assign) NSInteger highlightedLyricsIndex;
 @property (nonatomic, strong) UIButton *playPauseButton;
 @property (nonatomic, strong) UIButton *previousButton;
 @property (nonatomic, strong) UIButton *nextButton;
@@ -27,6 +34,7 @@
     if ((self = [super init])) {
         _initialItem = item;
         _initialPlaylist = [playlist copy];
+        _highlightedLyricsIndex = NSNotFound;
     }
     return self;
 }
@@ -56,22 +64,35 @@
 
     self.statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.statusLabel.font = [UIFont systemFontOfSize:12];
-    self.statusLabel.textColor = [OETheme accentColor];
     self.statusLabel.textAlignment = NSTextAlignmentCenter;
     self.statusLabel.backgroundColor = [UIColor clearColor];
     [self.view addSubview:self.statusLabel];
 
+    self.lyricsTable = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    self.lyricsTable.dataSource = self;
+    self.lyricsTable.delegate = self;
+    self.lyricsTable.rowHeight = 28;
+    self.lyricsTable.separatorStyle = UITableViewCellSeparatorStyleNone;
+    self.lyricsTable.showsVerticalScrollIndicator = NO;
+    [self.view addSubview:self.lyricsTable];
+
+    self.lyricsEmptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.lyricsEmptyLabel.text = @"正在加载歌词…";
+    self.lyricsEmptyLabel.textAlignment = NSTextAlignmentCenter;
+    self.lyricsEmptyLabel.font = [UIFont systemFontOfSize:13];
+    self.lyricsEmptyLabel.backgroundColor = [UIColor clearColor];
+    [self.lyricsTable addSubview:self.lyricsEmptyLabel];
+
     self.progressSlider = [[UISlider alloc] initWithFrame:CGRectZero];
-    self.progressSlider.minimumTrackTintColor = [OETheme accentColor];
-    self.progressSlider.maximumTrackTintColor = [OETheme separatorColor];
+    self.progressSlider.minimumValue = 0.0;
+    self.progressSlider.maximumValue = 1.0;
     [self.progressSlider addTarget:self action:@selector(sliderTouchDown) forControlEvents:UIControlEventTouchDown];
     [self.progressSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
-    [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+    [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
     [self.view addSubview:self.progressSlider];
 
     self.timeLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.timeLabel.font = [UIFont systemFontOfSize:11];
-    self.timeLabel.textColor = [OETheme secondaryTextColor];
     self.timeLabel.textAlignment = NSTextAlignmentCenter;
     self.timeLabel.backgroundColor = [UIColor clearColor];
     [self.view addSubview:self.timeLabel];
@@ -81,7 +102,6 @@
     [self.view addSubview:self.previousButton];
 
     self.playPauseButton = [self circularButton];
-    self.playPauseButton.backgroundColor = [OETheme accentColor];
     [self.playPauseButton addTarget:self action:@selector(playPauseTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.playPauseButton];
 
@@ -111,36 +131,52 @@
     self.artworkView.layer.borderColor = [OETheme separatorColor].CGColor;
     self.titleLabel.textColor = [OETheme primaryTextColor];
     self.artistLabel.textColor = [OETheme secondaryTextColor];
+    self.statusLabel.textColor = [OETheme accentColor];
     self.timeLabel.textColor = [OETheme secondaryTextColor];
+    self.progressSlider.minimumTrackTintColor = [OETheme accentColor];
+    self.progressSlider.maximumTrackTintColor = [OETheme separatorColor];
+    self.lyricsTable.backgroundColor = [OETheme cellColor];
+    self.lyricsEmptyLabel.textColor = [OETheme secondaryTextColor];
     for (UIButton *button in @[self.previousButton, self.playPauseButton, self.nextButton]) {
         button.layer.borderColor = [OETheme separatorColor].CGColor;
-        if (button != self.playPauseButton) button.backgroundColor = [OETheme cellColor];
+        button.backgroundColor = button == self.playPauseButton ? [OETheme accentColor] : [OETheme cellColor];
     }
     if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
 }
 
 - (void)applyThemeAndRefresh {
     [self applyTheme];
+    [self.lyricsTable reloadData];
     [self refresh];
 }
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGFloat w = self.view.bounds.size.width;
-    CGFloat y = 20;
-    CGFloat artwork = MIN(w - 64, 230);
+    CGFloat y = 10;
+    // Keep all controls reachable on 3.5-inch iPhones after the navigation
+    // bar has consumed part of the 480-point screen.
+    CGFloat artworkLimit = self.view.bounds.size.height < 450 ? 120 : 150;
+    CGFloat artwork = MIN(w - 64, artworkLimit);
     self.artworkView.frame = CGRectMake((w - artwork) / 2.0, y, artwork, artwork);
-    y = CGRectGetMaxY(self.artworkView.frame) + 18;
-    self.titleLabel.frame = CGRectMake(24, y, w - 48, 24);
-    y += 26;
-    self.artistLabel.frame = CGRectMake(24, y, w - 48, 19);
+    y = CGRectGetMaxY(self.artworkView.frame) + 8;
+    self.titleLabel.frame = CGRectMake(24, y, w - 48, 22);
     y += 23;
-    self.statusLabel.frame = CGRectMake(24, y, w - 48, 17);
-    y += 25;
-    self.progressSlider.frame = CGRectMake(25, y, w - 50, 22);
-    y += 22;
-    self.timeLabel.frame = CGRectMake(24, y, w - 48, 16);
-    y += 29;
+    self.artistLabel.frame = CGRectMake(24, y, w - 48, 18);
+    y += 19;
+    self.statusLabel.frame = CGRectMake(24, y, w - 48, 16);
+    y += 19;
+    CGFloat buttonsHeight = 64 + 29;
+    CGFloat remaining = self.view.bounds.size.height - y - buttonsHeight - 64;
+    CGFloat lyricsHeight = MAX(42, MIN(130, remaining));
+    self.lyricsTable.frame = CGRectMake(16, y, w - 32, lyricsHeight);
+    self.lyricsEmptyLabel.frame = self.lyricsTable.bounds;
+    y = CGRectGetMaxY(self.lyricsTable.frame) + 6;
+    // The 40-point control frame gives the iOS 6 slider a reliable touch target.
+    self.progressSlider.frame = CGRectMake(20, y, w - 40, 40);
+    y += 35;
+    self.timeLabel.frame = CGRectMake(24, y, w - 48, 14);
+    y += 20;
     CGFloat small = 50, large = 64, gap = 28;
     self.previousButton.frame = CGRectMake((w - large) / 2.0 - gap - small, y + 7, small, small);
     self.playPauseButton.frame = CGRectMake((w - large) / 2.0, y, large, large);
@@ -161,7 +197,27 @@
     [self.playPauseButton setImage:[OEIconFactory imageForIconType:primary size:CGSizeMake(28, 28) color:[UIColor whiteColor]] forState:UIControlStateNormal];
     [self.previousButton setImage:[OEIconFactory imageForIconType:OEIconTypePrevious size:CGSizeMake(24, 24) color:[OETheme primaryTextColor]] forState:UIControlStateNormal];
     [self.nextButton setImage:[OEIconFactory imageForIconType:OEIconTypeNext size:CGSizeMake(24, 24) color:[OETheme primaryTextColor]] forState:UIControlStateNormal];
+    [self requestLyricsForItemIfNeeded:item];
     [self refreshProgress];
+}
+
+- (void)requestLyricsForItemIfNeeded:(OEEmbyItem *)item {
+    if (!item.itemId.length || [item.itemId isEqualToString:self.lyricsItemId]) return;
+    self.lyricsItemId = item.itemId;
+    self.lyrics = @[];
+    self.highlightedLyricsIndex = NSNotFound;
+    self.lyricsEmptyLabel.text = @"正在加载歌词…";
+    self.lyricsEmptyLabel.hidden = NO;
+    [self.lyricsTable reloadData];
+    NSString *itemId = [item.itemId copy];
+    [[OEEmbyAPIClient sharedClient] fetchLyricsForItem:itemId completion:^(id result, NSError *error) {
+        if (![itemId isEqualToString:self.lyricsItemId]) return;
+        self.lyrics = error ? @[] : [OELyricsLine linesFromEmbyResponse:result];
+        self.lyricsEmptyLabel.text = self.lyrics.count ? @"" : @"此歌曲暂无同步歌词";
+        self.lyricsEmptyLabel.hidden = self.lyrics.count > 0;
+        [self.lyricsTable reloadData];
+        [self updateHighlightedLyricsAtTime:[OEMusicPlaybackManager sharedManager].currentTime scroll:NO];
+    }];
 }
 
 - (void)refreshProgress {
@@ -169,6 +225,26 @@
     OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
     self.progressSlider.value = manager.progress;
     self.timeLabel.text = [NSString stringWithFormat:@"%@ / %@", [self stringForTime:manager.currentTime], [self stringForTime:manager.duration]];
+    [self updateHighlightedLyricsAtTime:manager.currentTime scroll:YES];
+}
+
+- (void)updateHighlightedLyricsAtTime:(NSTimeInterval)time scroll:(BOOL)scroll {
+    NSInteger selected = NSNotFound;
+    for (NSInteger i = 0; i < (NSInteger)self.lyrics.count; i++) {
+        OELyricsLine *line = self.lyrics[i];
+        if (line.startTime <= time) selected = i;
+        else break;
+    }
+    if (selected == self.highlightedLyricsIndex) return;
+    NSInteger previous = self.highlightedLyricsIndex;
+    self.highlightedLyricsIndex = selected;
+    NSMutableArray *reload = [NSMutableArray array];
+    if (previous != NSNotFound && previous < (NSInteger)self.lyrics.count) [reload addObject:[NSIndexPath indexPathForRow:previous inSection:0]];
+    if (selected != NSNotFound) [reload addObject:[NSIndexPath indexPathForRow:selected inSection:0]];
+    if (reload.count) [self.lyricsTable reloadRowsAtIndexPaths:reload withRowAnimation:UITableViewRowAnimationNone];
+    if (scroll && selected != NSNotFound) {
+        [self.lyricsTable scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:selected inSection:0] atScrollPosition:UITableViewScrollPositionMiddle animated:YES];
+    }
 }
 
 - (NSString *)stringForTime:(NSTimeInterval)time {
@@ -183,11 +259,39 @@
 - (void)sliderTouchDown { self.seeking = YES; }
 - (void)sliderChanged:(UISlider *)slider {
     OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
-    self.timeLabel.text = [NSString stringWithFormat:@"%@ / %@", [self stringForTime:slider.value * manager.duration], [self stringForTime:manager.duration]];
+    NSTimeInterval previewTime = slider.value * manager.duration;
+    self.timeLabel.text = [NSString stringWithFormat:@"%@ / %@", [self stringForTime:previewTime], [self stringForTime:manager.duration]];
+    [self updateHighlightedLyricsAtTime:previewTime scroll:NO];
 }
 - (void)sliderTouchUp {
-    self.seeking = NO;
-    [[OEMusicPlaybackManager sharedManager] seekToProgress:self.progressSlider.value completion:nil];
+    float progress = self.progressSlider.value;
+    __weak typeof(self) weakSelf = self;
+    [[OEMusicPlaybackManager sharedManager] seekToProgress:progress completion:^(BOOL finished) {
+        weakSelf.seeking = NO;
+        [weakSelf refreshProgress];
+    }];
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.lyrics.count; }
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    static NSString *identifier = @"LyricsLine";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
+    if (!cell) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:identifier];
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        cell.textLabel.textAlignment = NSTextAlignmentCenter;
+        cell.textLabel.font = [UIFont systemFontOfSize:13];
+        cell.textLabel.backgroundColor = [UIColor clearColor];
+    }
+    OELyricsLine *line = self.lyrics[indexPath.row];
+    cell.textLabel.text = line.text;
+    BOOL current = indexPath.row == self.highlightedLyricsIndex;
+    cell.backgroundColor = [OETheme cellColor];
+    cell.contentView.backgroundColor = [OETheme cellColor];
+    cell.textLabel.textColor = current ? [OETheme accentColor] : [OETheme secondaryTextColor];
+    cell.textLabel.font = current ? [UIFont boldSystemFontOfSize:14] : [UIFont systemFontOfSize:13];
+    return cell;
 }
 
 - (void)viewWillAppear:(BOOL)animated {

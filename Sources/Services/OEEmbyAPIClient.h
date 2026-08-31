@@ -27,6 +27,7 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 // Playback
 - (void)fetchPlaybackInfoForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
 - (void)fetchStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
+- (void)fetchLyricsForItem:(NSString *)itemId completion:(OEAPICompletion)completion;
 
 // Helpers
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width;

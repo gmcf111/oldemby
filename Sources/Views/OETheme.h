@@ -25,6 +25,9 @@ typedef NS_ENUM(NSInteger, OEThemeMode) {
 + (void)applyApplicationAppearance;
 + (void)applyToNavigationBar:(UINavigationBar *)bar;
 + (void)applyToTabBar:(UITabBar *)tabBar;
+// Recursively re-tint every nav/tab/tool bar already in the hierarchy; needed
+// because appearance proxies only reach views created after the theme change.
++ (void)applyToBarsInView:(UIView *)view;
 + (void)prepareViewController:(UIViewController *)viewController;
 
 @end
