@@ -16,6 +16,7 @@ typedef NS_ENUM(NSInteger, OEEmbyItemType) {
 @property (nonatomic, copy) NSString *itemId;
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic, copy) NSString *type;
+@property (nonatomic, copy) NSString *collectionType; // CollectionFolder: movies/tvshows/music/...
 @property (nonatomic, assign) OEEmbyItemType itemType;
 @property (nonatomic, copy) NSString *imageTag;
 @property (nonatomic, assign) CGFloat primaryImageAspectRatio;

@@ -11,6 +11,8 @@
     it.name = [rawName isKindOfClass:[NSString class]] ? rawName : nil;
     it.type = [rawType isKindOfClass:[NSString class]] ? rawType : nil;
     it.itemType = [self typeFromString:it.type];
+    id collectionType = [dict objectForKey:@"CollectionType"];
+    it.collectionType = [collectionType isKindOfClass:[NSString class]] ? collectionType : nil;
     id overview = [dict objectForKey:@"Overview"];
     id album = [dict objectForKey:@"Album"];
     it.overview = [overview isKindOfClass:[NSString class]] ? overview : nil;

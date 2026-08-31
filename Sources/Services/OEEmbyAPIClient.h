@@ -19,6 +19,8 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 - (void)fetchItemsInParent:(NSString *)parentId itemTypes:(NSString *)types startIndex:(NSInteger)start limit:(NSInteger)limit sortBy:(NSString *)sortBy completion:(OEAPICompletion)completion;
 // recursive=NO is used for folder drill-down so only direct children are returned.
 - (void)fetchItemsInParent:(NSString *)parentId itemTypes:(NSString *)types startIndex:(NSInteger)start limit:(NSInteger)limit sortBy:(NSString *)sortBy recursive:(BOOL)recursive completion:(OEAPICompletion)completion;
+// sortOrder is Emby's SortOrder param: @"Ascending" or @"Descending".
+- (void)fetchItemsInParent:(NSString *)parentId itemTypes:(NSString *)types startIndex:(NSInteger)start limit:(NSInteger)limit sortBy:(NSString *)sortBy sortOrder:(NSString *)sortOrder recursive:(BOOL)recursive completion:(OEAPICompletion)completion;
 // Songs of a MusicArtist (artists are virtual nodes, ParentId does not work -> filter by ArtistIds)
 - (void)fetchSongsForArtist:(NSString *)artistId startIndex:(NSInteger)start limit:(NSInteger)limit completion:(OEAPICompletion)completion;
 

@@ -5,6 +5,7 @@
 #import "Models/OEServerConfig.h"
 #import "Controllers/OEVideoDetailViewController.h"
 #import "Views/OETheme.h"
+#import "Constants.h"
 
 @interface OEEpisodeListViewController ()
 @property (nonatomic, strong) OEEmbyItem *series;
@@ -32,12 +33,24 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
-    self.tableView.backgroundColor = [OETheme libraryBackgroundColor];
-    self.tableView.separatorColor = [OETheme separatorColor];
     self.tableView.rowHeight = 60;
+    [self applyTheme];
     [self.view addSubview:self.tableView];
 
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyThemeAndReload) name:kNotificationThemeDidChange object:nil];
     [self loadData];
+}
+
+- (void)applyTheme {
+    self.view.backgroundColor = [OETheme libraryBackgroundColor];
+    self.tableView.backgroundColor = [OETheme libraryBackgroundColor];
+    self.tableView.separatorColor = [OETheme separatorColor];
+    if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
+}
+
+- (void)applyThemeAndReload {
+    [self applyTheme];
+    [self.tableView reloadData];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -111,5 +124,7 @@
     OEVideoDetailViewController *vc = [[OEVideoDetailViewController alloc] initWithItem:it];
     [self.navigationController pushViewController:vc animated:YES];
 }
+
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 
 @end

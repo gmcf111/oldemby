@@ -42,6 +42,8 @@
     self.window.rootViewController = self.tabBarController;
     [self.window makeKeyAndVisible];
 
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(themeDidChange) name:kNotificationThemeDidChange object:nil];
+
     NSString *token = [[NSUserDefaults standardUserDefaults] stringForKey:kDefaultsServerToken];
     NSString *host = [[NSUserDefaults standardUserDefaults] stringForKey:kDefaultsServerHost];
     if (!token || !host) {
@@ -55,6 +57,26 @@
 }
 
 - (void)applicationDidEnterBackground:(UIApplication *)application {
+}
+
+// Re-tint bars that were created before the theme changed (appearance
+// proxies only affect newly created views) and repaint the window.
+- (void)themeDidChange {
+    [OETheme applyApplicationAppearance];
+    self.window.backgroundColor = [OETheme libraryBackgroundColor];
+    for (UIViewController *vc in self.tabBarController.viewControllers) {
+        if ([vc isKindOfClass:[UINavigationController class]]) {
+            [OETheme applyToNavigationBar:((UINavigationController *)vc).navigationBar];
+        }
+    }
+    [OETheme applyToTabBar:self.tabBarController.tabBar];
+    UIViewController *presented = self.tabBarController.presentedViewController;
+    if ([presented isKindOfClass:[UINavigationController class]]) {
+        [OETheme applyToNavigationBar:((UINavigationController *)presented).navigationBar];
+    }
+    // Status bar style is app-wide (Info.plist has no per-VC setting): keep it readable on the theme.
+    UIStatusBarStyle style = [OETheme themeMode] == OEThemeModeLight ? UIStatusBarStyleDefault : UIStatusBarStyleBlackOpaque;
+    [[UIApplication sharedApplication] setStatusBarStyle:style animated:YES];
 }
 
 - (BOOL)application:(UIApplication *)application handleOpenURL:(NSURL *)url {

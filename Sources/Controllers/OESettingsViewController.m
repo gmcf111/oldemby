@@ -3,6 +3,7 @@
 #import "Models/OEServerConfig.h"
 #import "Services/OEEmbyAPIClient.h"
 #import "Views/OETheme.h"
+#import "Constants.h"
 
 @interface OESettingsViewController ()
 @property (nonatomic, strong) UITableView *table;
@@ -21,11 +22,29 @@
     self.table.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.table.dataSource = self;
     self.table.delegate = self;
-    self.table.backgroundColor = [OETheme libraryBackgroundColor];
+    [self applyTheme];
     [self.view addSubview:self.table];
 
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"保存" style:UIBarButtonItemStyleDone target:self action:@selector(save)];
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"退出登录" style:UIBarButtonItemStylePlain target:self action:@selector(logout)];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyThemeAndReload) name:kNotificationThemeDidChange object:nil];
+}
+
+- (void)applyTheme {
+    self.view.backgroundColor = [OETheme libraryBackgroundColor];
+    self.table.backgroundView = nil; // replaces the iOS 6 linen texture with a solid theme color
+    self.table.backgroundColor = [OETheme libraryBackgroundColor];
+    if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
+}
+
+- (void)applyThemeAndReload {
+    [self applyTheme];
+    [self.table reloadData];
+}
+
+- (void)themeSwitchChanged:(UISegmentedControl *)control {
+    [OETheme setThemeMode:control.selectedSegmentIndex == 1 ? OEThemeModeLight : OEThemeModeDark];
 }
 
 - (void)save {
@@ -79,20 +98,22 @@
 #pragma mark - Table
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 4;
+    return 5;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section==0) return 4; // resolution 480/720/1080 + note
-    if (section==1) return 5; // bitrate presets + custom
-    if (section==2) return 2; // direct play toggle + audio bitrate
+    if (section==0) return 1; // appearance
+    if (section==1) return 4; // resolution 480/720/1080 + note
+    if (section==2) return 5; // bitrate presets + custom
+    if (section==3) return 2; // direct play toggle + audio bitrate
     return 2; // account info
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    if (section==0) return @"分辨率 (默认 720p)";
-    if (section==1) return @"视频码率 (默认 4 Mbps)";
-    if (section==2) return @"播放模式与音频";
+    if (section==0) return @"外观";
+    if (section==1) return @"分辨率 (默认 720p)";
+    if (section==2) return @"视频码率 (默认 4 Mbps)";
+    if (section==3) return @"播放模式与音频";
     return @"账户";
 }
 
@@ -106,13 +127,26 @@
     cell.textLabel.font = [UIFont systemFontOfSize:14];
     cell.detailTextLabel.font = [UIFont systemFontOfSize:12];
     cell.detailTextLabel.text = nil;
+    cell.backgroundColor = [OETheme cellColor];
+    cell.textLabel.textColor = [OETheme primaryTextColor];
+    cell.textLabel.backgroundColor = [UIColor clearColor];
+    cell.detailTextLabel.textColor = [OETheme secondaryTextColor];
+    cell.detailTextLabel.backgroundColor = [UIColor clearColor];
 
     if (indexPath.section==0) {
+        cell.textLabel.text = @"主题模式";
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        UISegmentedControl *themeSwitch = [[UISegmentedControl alloc] initWithItems:@[@"深色", @"浅色"]];
+        themeSwitch.frame = CGRectMake(0, 0, 150, 30);
+        themeSwitch.selectedSegmentIndex = [OETheme themeMode] == OEThemeModeLight ? 1 : 0;
+        [themeSwitch addTarget:self action:@selector(themeSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+        cell.accessoryView = themeSwitch;
+    } else if (indexPath.section==1) {
         if (indexPath.row==0) { cell.textLabel.text=@"480p (720x480)"; cell.accessoryType = (self.settings.resolution==OEResolution480p)?UITableViewCellAccessoryCheckmark:UITableViewCellAccessoryNone; }
         else if (indexPath.row==1) { cell.textLabel.text=@"720p (1280x720) 推荐"; cell.accessoryType = (self.settings.resolution==OEResolution720p)?UITableViewCellAccessoryCheckmark:UITableViewCellAccessoryNone; }
         else if (indexPath.row==2) { cell.textLabel.text=@"1080p (1920x1080)"; cell.detailTextLabel.text=@"老设备解码吃力"; cell.accessoryType = (self.settings.resolution==OEResolution1080p)?UITableViewCellAccessoryCheckmark:UITableViewCellAccessoryNone; }
         else { cell.textLabel.text=@"说明"; cell.detailTextLabel.text=@"向 Emby 请求转码为 H.264"; cell.selectionStyle=UITableViewCellSelectionStyleNone; }
-    } else if (indexPath.section==1) {
+    } else if (indexPath.section==2) {
         NSArray *presets = @[@1500, @2500, @4000, @8000];
         NSArray *titles = @[@"1.5 Mbps 省流", @"2.5 Mbps 均衡", @"4 Mbps 高清 (默认)", @"8 Mbps 极清"];
         if (indexPath.row < 4) {
@@ -124,7 +158,7 @@
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%ld kbps", (long)self.settings.maxVideoBitrate/1000];
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
-    } else if (indexPath.section==2) {
+    } else if (indexPath.section==3) {
         if (indexPath.row==0) {
             cell.textLabel.text = @"直接播放 (不转码)";
             cell.detailTextLabel.text = self.settings.directPlay?@"已开启":@"已关闭";
@@ -155,22 +189,22 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section==0 && indexPath.row<3) {
+    if (indexPath.section==1 && indexPath.row<3) {
         self.settings.resolution = (OEResolution)indexPath.row;
         [tableView reloadData];
-    } else if (indexPath.section==1 && indexPath.row<4) {
+    } else if (indexPath.section==2 && indexPath.row<4) {
         NSArray *presets = @[@1500, @2500, @4000, @8000];
         self.settings.maxVideoBitrate = [presets[indexPath.row] integerValue]*1000;
         self.settings.directPlay = NO;
         [tableView reloadData];
-    } else if (indexPath.section==1 && indexPath.row==4) {
+    } else if (indexPath.section==2 && indexPath.row==4) {
         UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"自定义视频码率" message:@"输入 kbps 数值 (500-20000)" delegate:self cancelButtonTitle:@"取消" otherButtonTitles:@"确定", nil];
         av.alertViewStyle = UIAlertViewStylePlainTextInput;
         av.tag = 2000;
         [av textFieldAtIndex:0].keyboardType = UIKeyboardTypeNumberPad;
         [av textFieldAtIndex:0].text = [NSString stringWithFormat:@"%ld", (long)self.settings.maxVideoBitrate/1000];
         [av show];
-    } else if (indexPath.section==2 && indexPath.row==1) {
+    } else if (indexPath.section==3 && indexPath.row==1) {
         UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"自定义音频码率" message:@"输入 kbps 数值 (64-512)" delegate:self cancelButtonTitle:@"取消" otherButtonTitles:@"确定", nil];
         av.alertViewStyle = UIAlertViewStylePlainTextInput;
         av.tag = 2001;
@@ -184,5 +218,7 @@
     self.settings.directPlay = sw.isOn;
     [self.table reloadData];
 }
+
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 
 @end

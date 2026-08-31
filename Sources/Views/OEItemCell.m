@@ -12,8 +12,6 @@
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
-        self.backgroundColor = [OETheme cellColor];
-        self.contentView.backgroundColor = [OETheme cellColor];
         if ([self respondsToSelector:@selector(setSeparatorInset:)]) {
             self.separatorInset = UIEdgeInsetsMake(0, 76, 0, 0);
         }
@@ -21,25 +19,32 @@
         _coverView = [[UIImageView alloc] initWithFrame:CGRectZero];
         _coverView.contentMode = UIViewContentModeScaleAspectFit;
         _coverView.clipsToBounds = YES;
-        _coverView.backgroundColor = [UIColor colorWithWhite:0.055 alpha:1.0];
-        _coverView.layer.borderColor = [UIColor colorWithWhite:0.23 alpha:1.0].CGColor;
         _coverView.layer.borderWidth = 0.5;
         [self.contentView addSubview:_coverView];
 
         _titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
         _titleLabel.font = [UIFont boldSystemFontOfSize:15];
-        _titleLabel.textColor = [OETheme primaryTextColor];
         _titleLabel.backgroundColor = [UIColor clearColor];
         [self.contentView addSubview:_titleLabel];
 
         _detailLabel = [[UILabel alloc] initWithFrame:CGRectZero];
         _detailLabel.font = [UIFont systemFontOfSize:12];
-        _detailLabel.textColor = [OETheme secondaryTextColor];
         _detailLabel.numberOfLines = 2;
         _detailLabel.backgroundColor = [UIColor clearColor];
         [self.contentView addSubview:_detailLabel];
+
+        [self applyTheme];
     }
     return self;
+}
+
+- (void)applyTheme {
+    self.backgroundColor = [OETheme cellColor];
+    self.contentView.backgroundColor = [OETheme cellColor];
+    _coverView.backgroundColor = [OETheme imagePlaceholderColor];
+    _coverView.layer.borderColor = [OETheme separatorColor].CGColor;
+    _titleLabel.textColor = [OETheme primaryTextColor];
+    _detailLabel.textColor = [OETheme secondaryTextColor];
 }
 
 - (void)setCompactLayout:(BOOL)compactLayout {
@@ -71,6 +76,7 @@
 }
 
 - (void)configureWithItem:(OEEmbyItem *)item {
+    [self applyTheme];
     self.representedItemId = item.itemId;
     self.titleLabel.text = item.name ?: @"未命名";
     self.detailLabel.text = [NSString stringWithFormat:@"%@  %@", item.type ?: @"", [item displayDuration]];

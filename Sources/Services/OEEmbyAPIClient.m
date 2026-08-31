@@ -206,6 +206,10 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
 }
 
 - (void)fetchItemsInParent:(NSString *)parentId itemTypes:(NSString *)types startIndex:(NSInteger)start limit:(NSInteger)limit sortBy:(NSString *)sortBy recursive:(BOOL)recursive completion:(OEAPICompletion)completion {
+    [self fetchItemsInParent:parentId itemTypes:types startIndex:start limit:limit sortBy:sortBy sortOrder:@"Ascending" recursive:recursive completion:completion];
+}
+
+- (void)fetchItemsInParent:(NSString *)parentId itemTypes:(NSString *)types startIndex:(NSInteger)start limit:(NSInteger)limit sortBy:(NSString *)sortBy sortOrder:(NSString *)sortOrder recursive:(BOOL)recursive completion:(OEAPICompletion)completion {
     OEServerConfig *c = [OEServerConfig sharedConfig];
     if (!c.userId) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }
     NSString *path = [NSString stringWithFormat:@"/Users/%@/Items", c.userId];
@@ -217,7 +221,7 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
     p[@"StartIndex"] = @(start).stringValue;
     p[@"Limit"] = @(limit).stringValue;
     p[@"SortBy"] = sortBy.length ? sortBy : @"SortName";
-    p[@"SortOrder"] = @"Ascending";
+    p[@"SortOrder"] = sortOrder.length ? sortOrder : @"Ascending";
     p[@"Recursive"] = recursive ? @"true" : @"false";
     [self GET:path params:p completion:^(id result, NSError *error){
         if (error) { if (completion) completion(nil, error); return; }

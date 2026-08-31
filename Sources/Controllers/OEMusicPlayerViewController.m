@@ -37,23 +37,19 @@
     self.title = @"正在播放";
 
     self.artworkView = [[UIImageView alloc] initWithFrame:CGRectZero];
-    self.artworkView.backgroundColor = [UIColor colorWithWhite:0.055 alpha:1.0];
     self.artworkView.contentMode = UIViewContentModeScaleAspectFit;
     self.artworkView.clipsToBounds = YES;
-    self.artworkView.layer.borderColor = [OETheme separatorColor].CGColor;
     self.artworkView.layer.borderWidth = 1.0;
     [self.view addSubview:self.artworkView];
 
     self.titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.titleLabel.font = [UIFont boldSystemFontOfSize:18];
-    self.titleLabel.textColor = [OETheme primaryTextColor];
     self.titleLabel.textAlignment = NSTextAlignmentCenter;
     self.titleLabel.backgroundColor = [UIColor clearColor];
     [self.view addSubview:self.titleLabel];
 
     self.artistLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.artistLabel.font = [UIFont systemFontOfSize:14];
-    self.artistLabel.textColor = [OETheme secondaryTextColor];
     self.artistLabel.textAlignment = NSTextAlignmentCenter;
     self.artistLabel.backgroundColor = [UIColor clearColor];
     [self.view addSubview:self.artistLabel];
@@ -95,6 +91,8 @@
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:kNotificationMusicPlaybackStateChanged object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshProgress) name:kNotificationMusicPlaybackProgressChanged object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyThemeAndRefresh) name:kNotificationThemeDidChange object:nil];
+    [self applyTheme];
     if (![OEMusicPlaybackManager sharedManager].active && self.initialItem) {
         [[OEMusicPlaybackManager sharedManager] playItem:self.initialItem playlist:self.initialPlaylist];
     }
@@ -103,10 +101,27 @@
 
 - (UIButton *)circularButton {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    button.backgroundColor = [OETheme cellColor];
-    button.layer.borderColor = [OETheme separatorColor].CGColor;
     button.layer.borderWidth = 1.0;
     return button;
+}
+
+- (void)applyTheme {
+    self.view.backgroundColor = [OETheme libraryBackgroundColor];
+    self.artworkView.backgroundColor = [OETheme imagePlaceholderColor];
+    self.artworkView.layer.borderColor = [OETheme separatorColor].CGColor;
+    self.titleLabel.textColor = [OETheme primaryTextColor];
+    self.artistLabel.textColor = [OETheme secondaryTextColor];
+    self.timeLabel.textColor = [OETheme secondaryTextColor];
+    for (UIButton *button in @[self.previousButton, self.playPauseButton, self.nextButton]) {
+        button.layer.borderColor = [OETheme separatorColor].CGColor;
+        if (button != self.playPauseButton) button.backgroundColor = [OETheme cellColor];
+    }
+    if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
+}
+
+- (void)applyThemeAndRefresh {
+    [self applyTheme];
+    [self refresh];
 }
 
 - (void)viewDidLayoutSubviews {

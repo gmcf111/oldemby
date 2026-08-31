@@ -4,6 +4,7 @@
 #import "Services/OEEmbyAPIClient.h"
 #import "Services/OEImageCache.h"
 #import "Views/OETheme.h"
+#import "Constants.h"
 #import <MediaPlayer/MediaPlayer.h>
 
 @interface OEVideoDetailViewController ()
@@ -37,21 +38,17 @@
 
     self.cover = [[UIImageView alloc] initWithFrame:CGRectZero];
     self.cover.contentMode = UIViewContentModeScaleAspectFit;
-    self.cover.backgroundColor = [UIColor colorWithWhite:0.055 alpha:1.0];
-    self.cover.layer.borderColor = [OETheme separatorColor].CGColor;
     self.cover.layer.borderWidth = 1.0;
     [self.view addSubview:self.cover];
 
     self.titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.titleLabel.font = [UIFont boldSystemFontOfSize:17];
-    self.titleLabel.textColor = [OETheme primaryTextColor];
     self.titleLabel.text = self.item.name;
     self.titleLabel.backgroundColor = [UIColor clearColor];
     [self.view addSubview:self.titleLabel];
 
     self.overviewLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.overviewLabel.font = [UIFont systemFontOfSize:12];
-    self.overviewLabel.textColor = [OETheme secondaryTextColor];
     self.overviewLabel.numberOfLines = 4;
     self.overviewLabel.text = self.item.overview ?: @"暂无简介";
     self.overviewLabel.backgroundColor = [UIColor clearColor];
@@ -73,8 +70,21 @@
     [self.playBtn addTarget:self action:@selector(playTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.playBtn];
 
+    [self applyTheme];
+
     NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:self.item width:480 height:300];
     [[OEImageCache sharedCache] loadImageFromURL:url placeholder:nil completion:^(UIImage *image) { self.cover.image = image; }];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyTheme) name:kNotificationThemeDidChange object:nil];
+}
+
+- (void)applyTheme {
+    self.view.backgroundColor = [OETheme libraryBackgroundColor];
+    self.cover.backgroundColor = [OETheme imagePlaceholderColor];
+    self.cover.layer.borderColor = [OETheme separatorColor].CGColor;
+    self.titleLabel.textColor = [OETheme primaryTextColor];
+    self.overviewLabel.textColor = [OETheme secondaryTextColor];
+    if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
 }
 
 - (void)viewDidLayoutSubviews {

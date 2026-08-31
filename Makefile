@@ -12,6 +12,7 @@ OldEmby_FILES = \
 	Sources/AppDelegate.m \
 	Sources/Controllers/OELoginViewController.m \
 	Sources/Controllers/OELibraryViewController.m \
+	Sources/Controllers/OEPosterWallViewController.m \
 	Sources/Controllers/OEVideoDetailViewController.m \
 	Sources/Controllers/OEEpisodeListViewController.m \
 	Sources/Controllers/OESettingsViewController.m \
@@ -26,6 +27,7 @@ OldEmby_FILES = \
 	Sources/Services/OEImageCache.m \
 	Sources/Services/OEMusicPlaybackManager.m \
 	Sources/Views/OEItemCell.m \
+	Sources/Views/OEPosterGridCell.m \
 	Sources/Views/OETheme.m \
 	Sources/Views/OEIconFactory.m \
 	Sources/Views/OEMiniPlayerView.m

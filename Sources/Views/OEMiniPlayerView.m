@@ -17,25 +17,20 @@
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        self.backgroundColor = [OETheme cellColor];
-        self.layer.borderColor = [OETheme separatorColor].CGColor;
         self.layer.borderWidth = 0.5;
 
         _artworkView = [[UIImageView alloc] initWithFrame:CGRectZero];
-        _artworkView.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1.0];
         _artworkView.contentMode = UIViewContentModeScaleAspectFit;
         _artworkView.clipsToBounds = YES;
         [self addSubview:_artworkView];
 
         _titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
         _titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        _titleLabel.textColor = [OETheme primaryTextColor];
         _titleLabel.backgroundColor = [UIColor clearColor];
         [self addSubview:_titleLabel];
 
         _artistLabel = [[UILabel alloc] initWithFrame:CGRectZero];
         _artistLabel.font = [UIFont systemFontOfSize:11];
-        _artistLabel.textColor = [OETheme secondaryTextColor];
         _artistLabel.backgroundColor = [UIColor clearColor];
         [self addSubview:_artistLabel];
 
@@ -50,9 +45,19 @@
         [self addTarget:self action:@selector(openPlayer) forControlEvents:UIControlEventTouchUpInside];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:kNotificationMusicPlaybackStateChanged object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:kNotificationMusicPlaybackProgressChanged object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:kNotificationThemeDidChange object:nil];
+        [self applyTheme];
         [self refresh];
     }
     return self;
+}
+
+- (void)applyTheme {
+    self.backgroundColor = [OETheme cellColor];
+    self.layer.borderColor = [OETheme separatorColor].CGColor;
+    self.artworkView.backgroundColor = [OETheme imagePlaceholderColor];
+    self.titleLabel.textColor = [OETheme primaryTextColor];
+    self.artistLabel.textColor = [OETheme secondaryTextColor];
 }
 
 - (void)layoutSubviews {
@@ -69,6 +74,7 @@
 }
 
 - (void)refresh {
+    [self applyTheme];
     OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
     OEEmbyItem *item = manager.currentItem;
     self.titleLabel.text = item.name ?: @"未播放";
