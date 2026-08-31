@@ -32,6 +32,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check iOS 6 API guards
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          APIs = {
+              "separatorInset": "setSeparatorInset:",
+              "layoutMargins": "setLayoutMargins:",
+              "preservesSuperviewLayoutMargins": "setPreservesSuperviewLayoutMargins:",
+              "topLayoutGuide": "topLayoutGuide",
+              "bottomLayoutGuide": "bottomLayoutGuide",
+              "setBarTintColor:": "setBarTintColor:",
+              "setEdgesForExtendedLayout:": "setEdgesForExtendedLayout:",
+          }
+          violations = []
+          for path in Path("Sources").rglob("*.[mh]"):
+              lines = path.read_text(encoding="utf-8").splitlines()
+              for index, line in enumerate(lines):
+                  for token, selector in APIs.items():
+                      if token not in line or "respondsToSelector:" in line or "@selector(" + token in line:
+                          continue
+                      if token.endswith(":"):
+                          used = re.search(r"\b" + re.escape(token[:-1]) + r"\s*:", line)
+                      else:
+                          used = re.search(r"\.\s*" + re.escape(token) + r"\b", line)
+                      if not used:
+                          continue
+                      guard = "respondsToSelector:@selector(" + selector + ")"
+                      context = "\n".join(lines[max(0, index - 6):index + 1])
+                      if guard not in context:
+                          violations.append("%s:%d uses %s without %s" % (path, index + 1, token, guard))
+          if violations:
+              print("::error::iOS 7+ API use must be guarded for the iOS 6 deployment target")
+              print("\n".join(violations))
+              sys.exit(1)
+          print("iOS 6 API guard check passed")
+          PY
+
       - name: Install dependencies
         run: |
           set -e

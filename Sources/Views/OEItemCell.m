@@ -14,7 +14,9 @@
         self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.backgroundColor = [OETheme cellColor];
         self.contentView.backgroundColor = [OETheme cellColor];
-        self.separatorInset = UIEdgeInsetsMake(0, 76, 0, 0);
+        if ([self respondsToSelector:@selector(setSeparatorInset:)]) {
+            self.separatorInset = UIEdgeInsetsMake(0, 76, 0, 0);
+        }
 
         _coverView = [[UIImageView alloc] initWithFrame:CGRectZero];
         _coverView.contentMode = UIViewContentModeScaleAspectFit;
