@@ -32,6 +32,14 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 - (void)fetchLyricsForAudioItem:(OEEmbyItem *)item completion:(OEAPICompletion)completion;
 - (void)fetchLyricsForItem:(NSString *)itemId completion:(OEAPICompletion)completion;
 
+// Casts (actors / directors etc.)
+// Fetches the people list for the given item via /Items/{Id} with Fields=People.
+// Returns an array of OECastItem objects on success.
+- (void)fetchCastsForItem:(NSString *)itemId completion:(OEAPICompletion)completion;
+
+// Helper: person (primary) image URL for a given person Id + tag.
+- (NSString *)personImageURLWithHost:(NSString *)host personId:(NSString *)personId tag:(NSString *)tag maxWidth:(NSInteger)width;
+
 // Helpers
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width;
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width height:(NSInteger)height;

@@ -1,6 +1,7 @@
 #import "OEEmbyAPIClient.h"
 #import "Models/OEServerConfig.h"
 #import "Models/OETranscodeSettings.h"
+#import "Models/OECastItem.h"
 #import "Services/OETranscodeBuilder.h"
 #import <UIKit/UIKit.h>
 #import <CoreFoundation/CoreFoundation.h>
@@ -423,6 +424,57 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
         [self GET:itemPath params:nil completion:completion];
     }];
 }
+
+#pragma mark - Casts
+
+- (void)fetchCastsForItem:(NSString *)itemId completion:(OEAPICompletion)completion {
+    if (!itemId.length) {
+        if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Missing item ID"}]);
+        return;
+    }
+    // Emby: GET /Items/{Id}?Fields=People returns the item with a People array.
+    // Each person entry has Id, Name, Role, Type, PrimaryImageTag, PrimaryImageAspectRatio.
+    NSString *path = [NSString stringWithFormat:@"/Items/%@", itemId];
+    NSDictionary *params = @{@"Fields": @"People"};
+    [self GET:path params:params completion:^(id result, NSError *error) {
+        if (error) { if (completion) completion(nil, error); return; }
+        if (![result isKindOfClass:[NSDictionary class]]) {
+            if (completion) completion(@[], nil);
+            return;
+        }
+        id people = [result objectForKey:@"People"];
+        if (![people isKindOfClass:[NSArray class]]) {
+            if (completion) completion(@[], nil);
+            return;
+        }
+        NSMutableArray *out = [NSMutableArray array];
+        for (id raw in people) {
+            if (![raw isKindOfClass:[NSDictionary class]]) continue;
+            OECastItem *cast = [OECastItem castWithDictionary:raw];
+            if (cast) [out addObject:cast];
+        }
+        if (completion) completion(out, nil);
+    }];
+}
+
+- (NSString *)personImageURLWithHost:(NSString *)host personId:(NSString *)personId tag:(NSString *)tag maxWidth:(NSInteger)width {
+    if (!personId.length || !tag.length || !host) return nil;
+    NSString *base = host;
+    while ([base hasSuffix:@"/"] && base.length > 1) base = [base substringToIndex:base.length - 1];
+    BOOL hasEmbyPrefix = [base hasSuffix:@"/emby"];
+    NSString *root = hasEmbyPrefix ? [base substringToIndex:base.length - 5] : base;
+    NSString *escapedTag = (NSString *)CFBridgingRelease(CFURLCreateStringByAddingPercentEscapes(NULL,
+        (__bridge CFStringRef)tag, NULL,
+        CFSTR(":/?#[]@!$&'()*+,;=%"), kCFStringEncodingUTF8));
+    NSString *url = [NSString stringWithFormat:@"%@/emby/Items/%@/Images/Primary?Tag=%@&maxWidth=%ld&quality=90",
+            root, personId, escapedTag ?: @"", (long)width];
+    NSString *token = [OEServerConfig sharedConfig].accessToken;
+    if (!token.length) return url;
+    NSString *escaped = OEEncodeQueryComponent(token);
+    return [url stringByAppendingFormat:@"&api_key=%@", escaped ?: @""];
+}
+
+#pragma mark - Image Helpers
 
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width {
     return [self imageURLForItem:item width:width height:0];

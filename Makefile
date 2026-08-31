@@ -20,6 +20,7 @@ OldEmby_FILES = \
 	Sources/Controllers/OEMusicPlayerViewController.m \
 	Sources/Controllers/OERootTabBarController.m \
 	Sources/Models/OEEmbyItem.m \
+	Sources/Models/OECastItem.m \
 	Sources/Models/OELyricsLine.m \
 	Sources/Models/OETranscodeSettings.m \
 	Sources/Models/OEServerConfig.m \
@@ -31,7 +32,8 @@ OldEmby_FILES = \
 	Sources/Views/OEPosterGridCell.m \
 	Sources/Views/OETheme.m \
 	Sources/Views/OEIconFactory.m \
-	Sources/Views/OEMiniPlayerView.m
+	Sources/Views/OEMiniPlayerView.m \
+	Sources/Views/OECastStripView.m
 
 OldEmby_FRAMEWORKS = UIKit Foundation MediaPlayer AVFoundation CoreGraphics QuartzCore CoreMedia AudioToolbox MediaToolbox
 OldEmby_PRIVATE_FRAMEWORKS =

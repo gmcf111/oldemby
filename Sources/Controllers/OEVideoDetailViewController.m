@@ -1,19 +1,35 @@
 #import "OEVideoDetailViewController.h"
 #import "Models/OEEmbyItem.h"
+#import "Models/OECastItem.h"
 #import "Models/OETranscodeSettings.h"
 #import "Services/OEEmbyAPIClient.h"
 #import "Services/OEImageCache.h"
 #import "Views/OETheme.h"
+#import "Views/OECastStripView.h"
 #import "Constants.h"
 #import <MediaPlayer/MediaPlayer.h>
+
+// Layout constants
+static const CGFloat kDetailSidePadding = 12.0;
+static const CGFloat kDetailCoverWidthFraction = 0.42;  // cover occupies ~42% of screen width
+static const CGFloat kDetailCoverMaxWidth = 200.0;
+static const CGFloat kDetailCoverMinWidth = 120.0;
+static const CGFloat kDetailCoverMinHeight = 180.0;
+static const CGFloat kDetailCoverMaxHeight = 300.0;
+static const CGFloat kCastStripHeight = 110.0;
 
 @interface OEVideoDetailViewController ()
 @property (nonatomic, strong) OEEmbyItem *item;
 @property (nonatomic, strong) UIImageView *cover;
 @property (nonatomic, strong) UILabel *titleLabel;
 @property (nonatomic, strong) UILabel *overviewLabel;
+@property (nonatomic, strong) UILabel *overviewHeaderLabel;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UIButton *playBtn;
+@property (nonatomic, strong) UILabel *castHeaderLabel;
+@property (nonatomic, strong) OECastStripView *castStrip;
+@property (nonatomic, strong) UIScrollView *scrollView;
+@property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) MPMoviePlayerViewController *activePlayerController;
 @property (nonatomic, assign) BOOL playerBecamePlayable;
 @property (nonatomic, assign) BOOL fetchingStream;
@@ -41,31 +57,67 @@
     [OETheme prepareViewController:self];
     self.title = self.item.name;
 
-    self.cover = [[UIImageView alloc] initWithFrame:CGRectZero];
-    self.cover.contentMode = UIViewContentModeScaleAspectFit;
-    self.cover.layer.borderWidth = 1.0;
-    [self.view addSubview:self.cover];
+    // ScrollView to hold all content (cover+overview+casts+play button)
+    _scrollView = [[UIScrollView alloc] initWithFrame:self.view.bounds];
+    _scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _scrollView.alwaysBounceVertical = YES;
+    _scrollView.showsVerticalScrollIndicator = YES;
+    [self.view addSubview:_scrollView];
 
+    _contentView = [[UIView alloc] initWithFrame:CGRectZero];
+    [_scrollView addSubview:_contentView];
+
+    // Cover image (left side)
+    self.cover = [[UIImageView alloc] initWithFrame:CGRectZero];
+    self.cover.contentMode = UIViewContentModeScaleAspectFill;
+    self.cover.clipsToBounds = YES;
+    self.cover.layer.borderWidth = 1.0;
+    [self.contentView addSubview:self.cover];
+
+    // Title label (right side, above overview)
     self.titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    self.titleLabel.font = [UIFont boldSystemFontOfSize:17];
+    self.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     self.titleLabel.text = self.item.name;
     self.titleLabel.backgroundColor = [UIColor clearColor];
-    [self.view addSubview:self.titleLabel];
+    self.titleLabel.numberOfLines = 2;
+    [self.contentView addSubview:self.titleLabel];
 
+    // Overview header
+    self.overviewHeaderLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.overviewHeaderLabel.font = [UIFont boldSystemFontOfSize:13];
+    self.overviewHeaderLabel.text = @"简介";
+    self.overviewHeaderLabel.backgroundColor = [UIColor clearColor];
+    [self.contentView addSubview:self.overviewHeaderLabel];
+
+    // Overview label (right side)
     self.overviewLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.overviewLabel.font = [UIFont systemFontOfSize:12];
-    self.overviewLabel.numberOfLines = 4;
+    self.overviewLabel.numberOfLines = 0;
     self.overviewLabel.text = self.item.overview ?: @"暂无简介";
     self.overviewLabel.backgroundColor = [UIColor clearColor];
-    [self.view addSubview:self.overviewLabel];
+    [self.contentView addSubview:self.overviewLabel];
 
+    // Cast header label
+    self.castHeaderLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.castHeaderLabel.font = [UIFont boldSystemFontOfSize:14];
+    self.castHeaderLabel.text = @"演职人员";
+    self.castHeaderLabel.backgroundColor = [UIColor clearColor];
+    [self.contentView addSubview:self.castHeaderLabel];
+
+    // Cast strip view
+    self.castStrip = [[OECastStripView alloc] initWithFrame:CGRectZero];
+    self.castStrip.casts = @[];
+    [self.contentView addSubview:self.castStrip];
+
+    // Status label
     self.statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.statusLabel.font = [UIFont systemFontOfSize:12];
     self.statusLabel.textAlignment = NSTextAlignmentCenter;
     self.statusLabel.textColor = [OETheme accentColor];
     self.statusLabel.backgroundColor = [UIColor clearColor];
-    [self.view addSubview:self.statusLabel];
+    [self.contentView addSubview:self.statusLabel];
 
+    // Play button
     self.playBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     self.playBtn.backgroundColor = [OETheme accentColor];
     self.playBtn.layer.cornerRadius = 7;
@@ -73,38 +125,109 @@
     [self.playBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [self.playBtn setTitle:[self playButtonTitle] forState:UIControlStateNormal];
     [self.playBtn addTarget:self action:@selector(playTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:self.playBtn];
+    [self.contentView addSubview:self.playBtn];
 
     [self applyTheme];
 
-    NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:self.item width:480 height:300];
+    // Load cover image — larger resolution since cover is bigger now
+    NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:self.item width:400 height:600];
     [[OEImageCache sharedCache] loadImageFromURL:url placeholder:nil completion:^(UIImage *image) { self.cover.image = image; }];
+
+    // Fetch cast list
+    [self loadCasts];
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyTheme) name:kNotificationThemeDidChange object:nil];
 }
 
+- (void)loadCasts {
+    [[OEEmbyAPIClient sharedClient] fetchCastsForItem:self.item.itemId completion:^(id result, NSError *error) {
+        if (error) {
+            // Silently ignore cast errors - not critical for playback
+            return;
+        }
+        if ([result isKindOfClass:[NSArray class]]) {
+            self.castStrip.casts = result;
+            [self setNeedsLayout];
+            [self.view setNeedsLayout];
+        }
+    }];
+}
+
 - (void)applyTheme {
     self.view.backgroundColor = [OETheme libraryBackgroundColor];
+    self.scrollView.backgroundColor = [OETheme libraryBackgroundColor];
+    self.contentView.backgroundColor = [UIColor clearColor];
     self.cover.backgroundColor = [OETheme imagePlaceholderColor];
     self.cover.layer.borderColor = [OETheme separatorColor].CGColor;
     self.titleLabel.textColor = [OETheme primaryTextColor];
+    self.overviewHeaderLabel.textColor = [OETheme accentColor];
     self.overviewLabel.textColor = [OETheme secondaryTextColor];
+    self.castHeaderLabel.textColor = [OETheme primaryTextColor];
+    self.statusLabel.textColor = [OETheme accentColor];
     if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
 }
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+
     CGFloat w = self.view.bounds.size.width;
-    CGFloat coverHeight = MIN(220, w * 0.62);
-    self.cover.frame = CGRectMake(20, 18, w - 40, coverHeight);
-    CGFloat y = CGRectGetMaxY(self.cover.frame) + 14;
-    self.titleLabel.frame = CGRectMake(20, y, w - 40, 24);
-    y += 28;
-    self.overviewLabel.frame = CGRectMake(20, y, w - 40, 72);
-    y += 79;
-    self.statusLabel.frame = CGRectMake(20, y, w - 40, 18);
-    y += 24;
-    self.playBtn.frame = CGRectMake(20, y, w - 40, 46);
+    CGFloat margin = kDetailSidePadding;
+
+    // Calculate cover dimensions: ~42% of screen width, clamped
+    CGFloat coverWidth = w * kDetailCoverWidthFraction;
+    coverWidth = MAX(kDetailCoverMinWidth, MIN(coverWidth, kDetailCoverMaxWidth));
+    // Cover aspect ratio: use 2:3 for movie posters, or item's aspect ratio
+    CGFloat aspectRatio = self.item.primaryImageAspectRatio > 0 ? self.item.primaryImageAspectRatio : (2.0 / 3.0);
+    // For posters, aspect < 1 means portrait; use it to calculate height
+    CGFloat coverHeight = coverWidth / (aspectRatio > 0 ? aspectRatio : (2.0 / 3.0));
+    coverHeight = MAX(kDetailCoverMinHeight, MIN(coverHeight, kDetailCoverMaxHeight));
+
+    // Top section: cover on left, title+overview on right
+    CGFloat topY = margin;
+    self.cover.frame = CGRectMake(margin, topY, coverWidth, coverHeight);
+
+    CGFloat rightX = margin + coverWidth + margin;
+    CGFloat rightWidth = w - rightX - margin;
+
+    // Title at top of right column
+    CGFloat titleHeight = 38;
+    self.titleLabel.frame = CGRectMake(rightX, topY, rightWidth, titleHeight);
+
+    // Overview header
+    CGFloat ovHdrY = CGRectGetMaxY(self.titleLabel.frame) + 6;
+    self.overviewHeaderLabel.frame = CGRectMake(rightX, ovHdrY, rightWidth, 18);
+
+    // Overview label: fill remaining right column space below cover top area
+    CGFloat ovY = CGRectGetMaxY(self.overviewHeaderLabel.frame) + 4;
+    CGFloat ovHeight = coverHeight - (titleHeight + 6 + 18 + 4);
+    // Calculate actual needed height using iOS 6 compatible API
+    CGSize textSize = [self.overviewLabel.text sizeWithFont:self.overviewLabel.font
+                                           constrainedToSize:CGSizeMake(rightWidth, CGFLOAT_MAX)
+                                               lineBreakMode:NSLineBreakByWordWrapping];
+    CGFloat neededHeight = ceil(textSize.height);
+    // The overview should at least fill the remaining cover area, but can be taller
+    ovHeight = MAX(neededHeight, ovHeight);
+    self.overviewLabel.frame = CGRectMake(rightX, ovY, rightWidth, ovHeight);
+
+    // After cover+overview section, the Y is the max of cover bottom and overview bottom
+    CGFloat afterTopY = MAX(CGRectGetMaxY(self.cover.frame), CGRectGetMaxY(self.overviewLabel.frame)) + 16;
+
+    // Cast section
+    self.castHeaderLabel.frame = CGRectMake(margin, afterTopY, w - 2 * margin, 20);
+    CGFloat castY = CGRectGetMaxY(self.castHeaderLabel.frame) + 6;
+    self.castStrip.frame = CGRectMake(margin, castY, w - 2 * margin, kCastStripHeight);
+
+    // Play button + status
+    CGFloat playY = CGRectGetMaxY(self.castStrip.frame) + 16;
+    self.statusLabel.frame = CGRectMake(margin, playY, w - 2 * margin, 18);
+    playY += 22;
+    self.playBtn.frame = CGRectMake(margin, playY, w - 2 * margin, 46);
+    playY += 46 + margin;
+
+    // Set content size for scrolling
+    self.scrollView.frame = self.view.bounds;
+    self.contentView.frame = CGRectMake(0, 0, w, playY);
+    self.scrollView.contentSize = CGSizeMake(w, playY);
 }
 
 - (void)viewWillAppear:(BOOL)animated {
