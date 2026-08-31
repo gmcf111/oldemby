@@ -2,7 +2,7 @@
 #import "Models/OECastItem.h"
 #import "Services/OEImageCache.h"
 #import "Services/OEEmbyAPIClient.h"
-#import "Services/OEServerConfig.h"
+#import "Models/OEServerConfig.h"
 #import "OETheme.h"
 
 // Layout constants
