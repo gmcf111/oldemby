@@ -10,8 +10,8 @@
 + (UIColor *)secondaryTextColor;
 + (UIColor *)accentColor;
 + (UIColor *)separatorColor;
-+
-++ (void)applyApplicationAppearance;
-++ (void)prepareViewController:(UIViewController *)viewController;
-+
+
++ (void)applyApplicationAppearance;
++ (void)prepareViewController:(UIViewController *)viewController;
+
 @end
