@@ -62,4 +62,56 @@
     return lines;
 }
 
++ (NSArray *)linesFromTextSubtitleString:(NSString *)text {
+    NSArray *lrcLines = [self linesFromLRCString:text];
+    if (lrcLines.count) return lrcLines;
+    if (![text isKindOfClass:[NSString class]] || !text.length) return @[];
+
+    NSMutableArray *lines = [NSMutableArray array];
+    NSArray *sourceLines = [text componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    for (NSInteger index = 0; index < (NSInteger)sourceLines.count; index++) {
+        NSString *rawLine = [sourceLines[index] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if ([rawLine hasPrefix:@"Dialogue:"]) {
+            NSArray *fields = [[rawLine substringFromIndex:[@"Dialogue:" length]] componentsSeparatedByString:@","];
+            if (fields.count >= 10) {
+                NSArray *parts = [[fields[1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] componentsSeparatedByString:@":"];
+                if (parts.count == 3) {
+                    NSTimeInterval seconds = [parts[0] doubleValue] * 3600.0 + [parts[1] doubleValue] * 60.0 + [parts[2] doubleValue];
+                    NSString *lineText = [[fields subarrayWithRange:NSMakeRange(9, fields.count - 9)] componentsJoinedByString:@","];
+                    lineText = [[lineText stringByReplacingOccurrencesOfString:@"\\N" withString:@" "] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                    if (lineText.length && seconds >= 0) {
+                        OELyricsLine *line = [[OELyricsLine alloc] init];
+                        line.startTime = seconds;
+                        line.text = lineText;
+                        [lines addObject:line];
+                    }
+                }
+            }
+            continue;
+        }
+        NSString *timeLine = [rawLine stringByReplacingOccurrencesOfString:@"," withString:@"."];
+        if ([timeLine hasPrefix:@"WEBVTT"] || [timeLine rangeOfString:@"-->"].location == NSNotFound) continue;
+        NSArray *range = [timeLine componentsSeparatedByString:@"-->"];
+        if (range.count != 2) continue;
+        NSArray *parts = [[range[0] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] componentsSeparatedByString:@":"];
+        if (parts.count < 2 || parts.count > 3) continue;
+        NSTimeInterval seconds = [[parts lastObject] doubleValue] + [parts[parts.count - 2] doubleValue] * 60.0;
+        if (parts.count == 3) seconds += [parts[0] doubleValue] * 3600.0;
+        NSMutableArray *textParts = [NSMutableArray array];
+        while (++index < (NSInteger)sourceLines.count) {
+            NSString *candidate = [sourceLines[index] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if (!candidate.length) break;
+            [textParts addObject:candidate];
+        }
+        NSString *lineText = [[textParts componentsJoinedByString:@" "] stringByReplacingOccurrencesOfString:@"<i>" withString:@""];
+        lineText = [lineText stringByReplacingOccurrencesOfString:@"</i>" withString:@""];
+        if (!lineText.length || seconds < 0) continue;
+        OELyricsLine *line = [[OELyricsLine alloc] init];
+        line.startTime = seconds;
+        line.text = lineText;
+        [lines addObject:line];
+    }
+    return lines;
+}
+
 @end

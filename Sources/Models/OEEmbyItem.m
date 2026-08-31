@@ -2,6 +2,24 @@
 
 @implementation OEEmbyItem
 
++ (BOOL)isSupportedEmbeddedLyricsStream:(NSDictionary *)stream {
+    if (![stream isKindOfClass:[NSDictionary class]]) return NO;
+    NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
+    if (![type isEqualToString:@"Subtitle"] || [stream[@"IsExternal"] boolValue]) return NO;
+    id rawIndex = stream[@"Index"];
+    if (![rawIndex respondsToSelector:@selector(integerValue)] || [rawIndex integerValue] < 0) return NO;
+    if ([stream[@"IsTextSubtitleStream"] boolValue]) return YES;
+    // Older Emby releases do not populate IsTextSubtitleStream for audio.
+    // In that case accept only known text codecs, never image subtitles.
+    NSString *codec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : @"";
+    return [@[@"lrc", @"srt", @"subrip", @"vtt", @"webvtt", @"ass", @"ssa"] containsObject:codec];
+}
+
++ (NSString *)supportedLyricsFormatForStream:(NSDictionary *)stream {
+    // Emby's subtitle stream API transcodes compatible text tracks to SRT.
+    return [self isSupportedEmbeddedLyricsStream:stream] ? @"srt" : nil;
+}
+
 + (instancetype)itemWithDictionary:(NSDictionary *)dict {
     OEEmbyItem *it = [[OEEmbyItem alloc] init];
     id rawId = [dict objectForKey:@"Id"];
@@ -11,6 +29,7 @@
     it.name = [rawName isKindOfClass:[NSString class]] ? rawName : nil;
     it.type = [rawType isKindOfClass:[NSString class]] ? rawType : nil;
     it.itemType = [self typeFromString:it.type];
+    it.embeddedLyricsStreamIndex = NSNotFound;
     id collectionType = [dict objectForKey:@"CollectionType"];
     it.collectionType = [collectionType isKindOfClass:[NSString class]] ? collectionType : nil;
     id overview = [dict objectForKey:@"Overview"];
@@ -40,6 +59,17 @@
     if ([ratio isKindOfClass:[NSNumber class]] && [ratio doubleValue] > 0) it.primaryImageAspectRatio = [ratio doubleValue];
     NSNumber *ticks = [dict objectForKey:@"RunTimeTicks"];
     if ([ticks isKindOfClass:[NSNumber class]]) it.runTimeTicks = [ticks longLongValue];
+    if (it.itemType == OEEmbyItemTypeAudio) {
+        NSArray *streams = [dict objectForKey:@"MediaStreams"];
+        for (id value in streams) {
+            if (![self isSupportedEmbeddedLyricsStream:value]) continue;
+            NSString *format = [self supportedLyricsFormatForStream:value];
+            if (!format.length) continue;
+            it.embeddedLyricsStreamIndex = [value[@"Index"] integerValue];
+            it.embeddedLyricsFormat = format;
+            break;
+        }
+    }
     NSNumber *sn = [dict objectForKey:@"ParentIndexNumber"];
     if ([sn isKindOfClass:[NSNumber class]]) it.seasonNumber = [sn integerValue];
     NSNumber *en = [dict objectForKey:@"IndexNumber"];

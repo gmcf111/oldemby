@@ -27,6 +27,9 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 // Playback
 - (void)fetchPlaybackInfoForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
 - (void)fetchStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
+// Fetch server-provided lyrics first, then a compatible text stream embedded
+// in the audio container when the server has no standalone lyrics result.
+- (void)fetchLyricsForItem:(OEEmbyItem *)item completion:(OEAPICompletion)completion;
 - (void)fetchLyricsForItem:(NSString *)itemId completion:(OEAPICompletion)completion;
 
 // Helpers

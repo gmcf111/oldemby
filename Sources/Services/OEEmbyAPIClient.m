@@ -216,7 +216,7 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
     NSMutableDictionary *p = [NSMutableDictionary dictionary];
     if (parentId) p[@"ParentId"] = parentId;
     if (types) p[@"IncludeItemTypes"] = types;
-    p[@"Fields"] = @"PrimaryImageAspectRatio,Overview,RunTimeTicks";
+    p[@"Fields"] = @"PrimaryImageAspectRatio,Overview,RunTimeTicks,MediaStreams";
     p[@"ImageTypeLimit"] = @"1";
     p[@"StartIndex"] = @(start).stringValue;
     p[@"Limit"] = @(limit).stringValue;
@@ -236,7 +236,7 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
     NSMutableDictionary *p = [NSMutableDictionary dictionary];
     p[@"IncludeItemTypes"] = @"Audio";
     p[@"ArtistIds"] = artistId ?: @"";
-    p[@"Fields"] = @"PrimaryImageAspectRatio,Overview,RunTimeTicks";
+    p[@"Fields"] = @"PrimaryImageAspectRatio,Overview,RunTimeTicks,MediaStreams";
     p[@"ImageTypeLimit"] = @"1";
     p[@"StartIndex"] = @(start).stringValue;
     p[@"Limit"] = @(limit).stringValue;
@@ -306,6 +306,103 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
             url = [url stringByAppendingFormat:@"%@api_key=%@", sep, OEEncodeQueryComponent(token)];
         }
         if (completion) completion(url, nil);
+    }];
+}
+
+- (void)GETText:(NSString *)path completion:(OEAPICompletion)completion {
+    NSURL *url = [self urlForPath:path params:nil];
+    if (!url) {
+        if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"No host configured"}]);
+        return;
+    }
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    request.HTTPMethod = @"GET";
+    [[self authHeaders] enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
+        [request setValue:value forHTTPHeaderField:key];
+    }];
+    [request setValue:@"text/plain, text/srt, text/vtt, application/octet-stream" forHTTPHeaderField:@"Accept"];
+    [NSURLConnection sendAsynchronousRequest:request queue:[NSOperationQueue mainQueue] completionHandler:^(NSURLResponse *response, NSData *data, NSError *error) {
+        if (error) { if (completion) completion(nil, error); return; }
+        NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+        if (http.statusCode < 200 || http.statusCode >= 300) {
+            NSError *statusError = [NSError errorWithDomain:@"OEEmbyAPI" code:http.statusCode userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"HTTP %ld while reading embedded lyrics", (long)http.statusCode]}];
+            if (completion) completion(nil, statusError);
+            return;
+        }
+        NSString *text = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"";
+        if (completion) completion(text ?: @"", nil);
+    }];
+}
+
+- (BOOL)lyricsResponseHasContent:(id)result {
+    if (![result isKindOfClass:[NSDictionary class]]) return NO;
+    id lyrics = result[@"Lyrics"];
+    if ([lyrics isKindOfClass:[NSArray class]]) return [lyrics count] > 0;
+    for (NSString *key in @[@"Text", @"LyricsText", @"Lyrics"]) {
+        id value = result[key];
+        if ([value isKindOfClass:[NSString class]] && [value length]) return YES;
+    }
+    return NO;
+}
+
+- (NSDictionary *)mediaSourceWithEmbeddedLyricsForItem:(OEEmbyItem *)item playbackInfo:(NSDictionary *)playbackInfo {
+    NSArray *sources = playbackInfo[@"MediaSources"];
+    for (id source in sources) {
+        if (![source isKindOfClass:[NSDictionary class]]) continue;
+        NSArray *streams = source[@"MediaStreams"];
+        for (id stream in streams) {
+            if (![stream isKindOfClass:[NSDictionary class]]) continue;
+            NSInteger index = [stream[@"Index"] respondsToSelector:@selector(integerValue)] ? [stream[@"Index"] integerValue] : NSNotFound;
+            NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
+            NSString *codec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : @"";
+            BOOL knownTextCodec = [@[@"lrc", @"srt", @"subrip", @"vtt", @"webvtt", @"ass", @"ssa"] containsObject:codec];
+            if (index == item.embeddedLyricsStreamIndex && [type isEqualToString:@"Subtitle"] && ([stream[@"IsTextSubtitleStream"] boolValue] || knownTextCodec)) return source;
+        }
+    }
+    return nil;
+}
+
+- (void)fetchEmbeddedLyricsForItem:(OEEmbyItem *)item completion:(OEAPICompletion)completion {
+    if (item.embeddedLyricsStreamIndex == NSNotFound || !item.embeddedLyricsFormat.length) {
+        if (completion) completion(@"", nil);
+        return;
+    }
+    // Request a fresh PlaybackInfo rather than trusting a list response: its
+    // MediaSources contain the authoritative ID required by the subtitle
+    // stream endpoint. This request must not alter the active audio player.
+    [self fetchPlaybackInfoForItem:item.itemId isAudio:YES completion:^(id result, NSError *error) {
+        if (error || ![result isKindOfClass:[NSDictionary class]]) {
+            if (completion) completion(@"", nil);
+            return;
+        }
+        NSDictionary *source = [self mediaSourceWithEmbeddedLyricsForItem:item playbackInfo:result];
+        NSString *mediaSourceId = [source[@"Id"] isKindOfClass:[NSString class]] ? source[@"Id"] : nil;
+        if (!mediaSourceId.length) {
+            if (completion) completion(@"", nil);
+            return;
+        }
+        NSString *path = [NSString stringWithFormat:@"/Items/%@/%@/Subtitles/%ld/Stream.%@",
+                          OEEncodeQueryComponent(item.itemId), OEEncodeQueryComponent(mediaSourceId),
+                          (long)item.embeddedLyricsStreamIndex, OEEncodeQueryComponent(item.embeddedLyricsFormat)];
+        [self GETText:path completion:^(id text, NSError *textError) {
+            // Lyrics are optional. A missing/unsupported embedded stream must
+            // never turn into a music playback error.
+            if (completion) completion(textError ? @"" : (text ?: @""), nil);
+        }];
+    }];
+}
+
+- (void)fetchLyricsForItem:(OEEmbyItem *)item completion:(OEAPICompletion)completion {
+    if (!item.itemId.length) {
+        if (completion) completion(@"", nil);
+        return;
+    }
+    [self fetchLyricsForItem:item.itemId completion:^(id result, NSError *error) {
+        if (!error && [self lyricsResponseHasContent:result]) {
+            if (completion) completion(result, nil);
+            return;
+        }
+        [self fetchEmbeddedLyricsForItem:item completion:completion];
     }];
 }
 

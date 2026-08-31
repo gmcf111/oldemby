@@ -24,6 +24,10 @@ typedef NS_ENUM(NSInteger, OEEmbyItemType) {
 @property (nonatomic, copy) NSString *overview;
 @property (nonatomic, copy) NSString *album;
 @property (nonatomic, copy) NSString *artist;
+// Candidate text subtitle stream embedded in an audio container. NSNotFound
+// means the item listing did not advertise a compatible lyrics stream.
+@property (nonatomic, assign) NSInteger embeddedLyricsStreamIndex;
+@property (nonatomic, copy) NSString *embeddedLyricsFormat;
 @property (nonatomic, assign) NSInteger seasonNumber;
 @property (nonatomic, assign) NSInteger episodeNumber;
 

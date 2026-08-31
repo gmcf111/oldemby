@@ -210,10 +210,14 @@
     self.lyricsEmptyLabel.hidden = NO;
     [self.lyricsTable reloadData];
     NSString *itemId = [item.itemId copy];
-    [[OEEmbyAPIClient sharedClient] fetchLyricsForItem:itemId completion:^(id result, NSError *error) {
+    [[OEEmbyAPIClient sharedClient] fetchLyricsForItem:item completion:^(id result, NSError *error) {
         if (![itemId isEqualToString:self.lyricsItemId]) return;
-        self.lyrics = error ? @[] : [OELyricsLine linesFromEmbyResponse:result];
-        self.lyricsEmptyLabel.text = self.lyrics.count ? @"" : @"此歌曲暂无同步歌词";
+        if ([result isKindOfClass:[NSString class]]) {
+            self.lyrics = [OELyricsLine linesFromTextSubtitleString:result];
+        } else {
+            self.lyrics = error ? @[] : [OELyricsLine linesFromEmbyResponse:result];
+        }
+        self.lyricsEmptyLabel.text = self.lyrics.count ? @"" : @"此歌曲暂无可显示歌词";
         self.lyricsEmptyLabel.hidden = self.lyrics.count > 0;
         [self.lyricsTable reloadData];
         [self updateHighlightedLyricsAtTime:[OEMusicPlaybackManager sharedManager].currentTime scroll:NO];
