@@ -45,6 +45,7 @@ jobs:
               "preservesSuperviewLayoutMargins": "setPreservesSuperviewLayoutMargins:",
               "topLayoutGuide": "topLayoutGuide",
               "bottomLayoutGuide": "bottomLayoutGuide",
+              "setBarStyle:": "setBarStyle:",
               "setBarTintColor:": "setBarTintColor:",
               "setEdgesForExtendedLayout:": "setEdgesForExtendedLayout:",
           }

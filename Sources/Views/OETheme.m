@@ -13,7 +13,7 @@
 
 + (void)applyApplicationAppearance {
     UINavigationBar *bar = [UINavigationBar appearance];
-    [bar setBarStyle:UIBarStyleBlack];
+    if ([bar respondsToSelector:@selector(setBarStyle:)]) [bar setBarStyle:UIBarStyleBlack];
     if ([bar respondsToSelector:@selector(setBarTintColor:)]) [bar setBarTintColor:[self navigationBarColor]];
     if ([bar respondsToSelector:@selector(setTintColor:)]) [bar setTintColor:[self accentColor]];
     [bar setTitleTextAttributes:@{
@@ -22,7 +22,7 @@
     }];
 
     UITabBar *tab = [UITabBar appearance];
-    [tab setBarStyle:UIBarStyleBlack];
+    if ([tab respondsToSelector:@selector(setBarStyle:)]) [tab setBarStyle:UIBarStyleBlack];
     if ([tab respondsToSelector:@selector(setBarTintColor:)]) [tab setBarTintColor:[self tabBarColor]];
     if ([tab respondsToSelector:@selector(setTintColor:)]) [tab setTintColor:[self accentColor]];
 }
