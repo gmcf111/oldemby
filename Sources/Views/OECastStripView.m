@@ -8,7 +8,6 @@
 // Layout constants
 static const CGFloat kCastPhotoSize = 72.0;
 static const CGFloat kCastCellWidth = 84.0;
-static const CGFloat kCastStripHeight = 110.0;
 static const CGFloat kCastPadding = 8.0;
 
 @interface OECastStripView ()
