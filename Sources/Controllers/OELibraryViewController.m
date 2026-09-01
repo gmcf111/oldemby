@@ -26,7 +26,7 @@
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
-    self.tableView.rowHeight = 150;
+    self.tableView.rowHeight = 106;
     [self applyTheme];
     [self.view addSubview:self.tableView];
 
@@ -111,27 +111,12 @@
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.libraries.count; }
 
-- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
-    // Full-bleed cover: height = cell width / the item's real aspect ratio
-    // (clamped) so the cover fills the row with nothing above or below.
-    if (indexPath.row >= (NSInteger)self.libraries.count) return 150;
-    OEEmbyItem *item = self.libraries[indexPath.row];
-    CGFloat w = self.tableView.bounds.size.width;
-    if (w < 1) w = [UIScreen mainScreen].bounds.size.width;
-    CGFloat ratio = item.primaryImageAspectRatio > 0 ? item.primaryImageAspectRatio : 1.78;
-    // Library banners are landscape; clamp to a sane band so a portrait or
-    // missing ratio never explodes the row.
-    ratio = MAX(1.2, MIN(ratio, 2.8));
-    return MAX(96, w / ratio);
-}
-
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     static NSString *ID = @"OELibraryCell";
     OEItemCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) {
         cell = [[OEItemCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
-        // No disclosure chevron: it would sit on top of the full-bleed cover.
-        cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     }
     cell.compactLayout = NO;
     OEEmbyItem *item = self.libraries[indexPath.row];

@@ -6,7 +6,6 @@
 @interface OEItemCell ()
 @property (nonatomic, copy) NSString *representedItemId;
 @property (nonatomic, assign) CGFloat primaryImageAspectRatio;
-@property (nonatomic, strong) UIView *captionOverlay;
 // Bold episode-number prefix rendered next to the (regular) title in
 // episode layout: "12. 名称" with only the number bold.
 @property (nonatomic, strong) UILabel *episodeNumberLabel;
@@ -26,12 +25,6 @@
         _coverView.clipsToBounds = YES;
         _coverView.layer.borderWidth = 0.5;
         [self.contentView addSubview:_coverView];
-
-        // Library rows overlay the caption on a translucent strip at the
-        // bottom of the full-width cover so nothing sits above or below it.
-        _captionOverlay = [[UIView alloc] initWithFrame:CGRectZero];
-        _captionOverlay.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
-        [self.contentView addSubview:_captionOverlay];
 
         _titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
         _titleLabel.font = [UIFont boldSystemFontOfSize:15];
@@ -60,11 +53,12 @@
     self.contentView.backgroundColor = [OETheme cellColor];
     _coverView.backgroundColor = [OETheme imagePlaceholderColor];
     _coverView.layer.borderColor = [OETheme separatorColor].CGColor;
-    BOOL libraryLayout = !_compactLayout && !_episodeLayout;
-    _titleLabel.textColor = libraryLayout ? [UIColor whiteColor] : [OETheme primaryTextColor];
+    // Library rows no longer overlay text on the cover, so they use the same
+    // theme colors as the other layouts.
+    _titleLabel.textColor = [OETheme primaryTextColor];
     _titleLabel.font = [UIFont boldSystemFontOfSize:15];
     _episodeNumberLabel.textColor = [OETheme primaryTextColor];
-    _detailLabel.textColor = libraryLayout ? [UIColor colorWithWhite:1 alpha:0.85] : [OETheme secondaryTextColor];
+    _detailLabel.textColor = [OETheme secondaryTextColor];
 }
 
 - (void)setCompactLayout:(BOOL)compactLayout {
@@ -89,7 +83,6 @@
         CGFloat aspectRatio = self.primaryImageAspectRatio > 0 ? self.primaryImageAspectRatio : (2.0 / 3.0);
         CGFloat imageWidth = MAX(1.0, MIN(imageHeight * aspectRatio, w * 0.55));
         _coverView.frame = CGRectMake(0, 0, imageWidth, imageHeight);
-        _captionOverlay.hidden = YES;
         CGFloat textX = imageWidth + 10;
         // Bold episode number ("12.") followed by the regular episode name.
         CGFloat numberW = 0;
@@ -105,23 +98,27 @@
         if ([self respondsToSelector:@selector(setSeparatorInset:)]) self.separatorInset = UIEdgeInsetsMake(0, textX, 0, 0);
     } else if (_compactLayout) {
         _coverView.frame = CGRectMake(8, 6, 48, 48);
-        _captionOverlay.hidden = YES;
         _titleLabel.frame = CGRectMake(66, 8, w - 76, 20);
         _detailLabel.frame = CGRectMake(66, 30, w - 76, 22);
         if ([self respondsToSelector:@selector(setSeparatorInset:)]) self.separatorInset = UIEdgeInsetsMake(0, 76, 0, 0);
     } else {
-        // Library rows: full-bleed cover filling the whole cell (width =
-        // cell width, height set by the controller from the item's real
-        // aspect ratio), caption overlaid at the bottom — nothing above or
-        // below the cover.
+        // Library rows: small banner cover on the left (about a quarter of
+        // the old full-bleed cover area), title and subtitle stacked on the
+        // right. Cover keeps the item's real landscape aspect ratio, capped
+        // at half the cell width.
         CGFloat h = self.contentView.bounds.size.height;
-        _coverView.frame = CGRectMake(0, 0, w, h);
-        CGFloat stripH = 34;
-        _captionOverlay.hidden = NO;
-        _captionOverlay.frame = CGRectMake(0, h - stripH, w, stripH);
-        _titleLabel.frame = CGRectMake(10, h - stripH + 3, w - 20, 18);
-        _detailLabel.frame = CGRectMake(10, h - stripH + 21, w - 20, 13);
-        if ([self respondsToSelector:@selector(setSeparatorInset:)]) self.separatorInset = UIEdgeInsetsMake(0, 76, 0, 0);
+        CGFloat margin = 8;
+        CGFloat imgH = MAX(1, h - margin * 2);
+        CGFloat ratio = self.primaryImageAspectRatio > 0 ? self.primaryImageAspectRatio : 1.78;
+        ratio = MAX(1.2, MIN(ratio, 2.8));
+        CGFloat imgW = MIN(imgH * ratio, w * 0.5);
+        _coverView.frame = CGRectMake(margin, margin, imgW, imgH);
+        CGFloat textX = margin + imgW + 10;
+        CGFloat textW = MAX(0, w - textX - 10);
+        CGFloat blockY = (h - 38) / 2;
+        _titleLabel.frame = CGRectMake(textX, blockY, textW, 20);
+        _detailLabel.frame = CGRectMake(textX, blockY + 22, textW, 16);
+        if ([self respondsToSelector:@selector(setSeparatorInset:)]) self.separatorInset = UIEdgeInsetsMake(0, textX, 0, 0);
     }
 }
 
@@ -158,10 +155,10 @@
         self.titleLabel.font = [UIFont boldSystemFontOfSize:15];
     }
     self.detailLabel.text = [NSString stringWithFormat:@"%@  %@", item.type ?: @"", [item displayDuration]];
-    // Library rows request a wide banner-size image to match the full-width
-    // cover; compact/episode rows keep their original small thumbnails.
-    NSInteger imageWidth = self.episodeLayout ? 280 : (self.compactLayout ? 128 : 640);
-    NSInteger imageHeight = self.episodeLayout ? 560 : (self.compactLayout ? 96 : 360);
+    // Library rows request a small banner thumbnail matching the quarter-size
+    // left cover; compact/episode rows keep their original small thumbnails.
+    NSInteger imageWidth = self.episodeLayout ? 280 : (self.compactLayout ? 128 : 320);
+    NSInteger imageHeight = self.episodeLayout ? 560 : (self.compactLayout ? 96 : 180);
     NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:item width:imageWidth height:imageHeight];
     [[OEImageCache sharedCache] loadImageFromURL:url placeholder:nil completion:^(UIImage *image) {
         if ([self.representedItemId isEqualToString:item.itemId]) self.coverView.image = image;
