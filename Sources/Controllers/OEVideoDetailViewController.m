@@ -249,7 +249,10 @@ static const CGFloat kCastStripHeight = 132.0;
         if (error) { [self showPlaybackError:error.localizedDescription]; return; }
         NSString *streamURL = [result isKindOfClass:[NSString class]] ? result : nil;
         NSURL *url = [NSURL URLWithString:streamURL];
-        if (!url || !url.scheme.length || !url.host.length) {
+        // The API client already validated and repaired the URL. Requiring a
+        // non-empty scheme/host here as well used to reject playable streams,
+        // so only bail out when NSURL produced nothing at all.
+        if (!url) {
             [self showPlaybackError:streamURL.length
                 ? [NSString stringWithFormat:@"服务器返回了无效的播放地址：%@", streamURL]
                 : @"服务器返回了无效的播放地址"];

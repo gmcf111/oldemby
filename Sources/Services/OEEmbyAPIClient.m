@@ -157,8 +157,15 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     OEServerConfig *cfg = [OEServerConfig sharedConfig];
     // Emby auth: POST /Users/AuthenticateByName
     NSDictionary *body = @{@"Username": user ?: @"", @"Pw": pass ?: @""};
-    NSString *base = host;
+    NSString *base = [host stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    // Normalize before the request AND before persisting: a host without a
+    // scheme makes every later playback URL unparseable.
+    NSString *lowerBase = [base lowercaseString];
+    if (base.length && ![lowerBase hasPrefix:@"http://"] && ![lowerBase hasPrefix:@"https://"]) {
+        base = [@"http://" stringByAppendingString:base];
+    }
     while ([base hasSuffix:@"/"] && base.length>1) base=[base substringToIndex:base.length-1];
+    NSString *normalizedHost = base;
     NSURL *url = [NSURL URLWithString:[base stringByAppendingString:@"/Users/AuthenticateByName"]];
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
     req.HTTPMethod = @"POST";
@@ -181,7 +188,7 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             uid = [fallbackId isKindOfClass:[NSString class]] ? fallbackId : nil;
         }
         if ([token isKindOfClass:[NSString class]] && token.length && [uid isKindOfClass:[NSString class]] && uid.length) {
-            cfg.host = host;
+            cfg.host = normalizedHost;
             cfg.accessToken = token;
             cfg.userId = uid;
             cfg.username = user;
@@ -357,26 +364,21 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         // Final gate: hand the player only URLs NSURL can actually parse.
         // iOS 6's CFURL is stricter than modern NSURL; if the byte-level
         // escape above still leaves something it rejects, fall back to the
-        // system's own escaping routine before giving up.  A bad URL used to
-        // surface as a generic "invalid playback URL" alert with no detail.
+        // system's own escaping routine before giving up.
         NSString *finalURL = OEEscapeIllegalURLCharacters(url);
-        NSURL *parsed = [NSURL URLWithString:finalURL];
-        if (!parsed || !parsed.scheme.length || !parsed.host.length) {
+        if (![NSURL URLWithString:finalURL]) {
             CFStringRef recovered = CFURLCreateStringByAddingPercentEscapes(NULL,
                 (__bridge CFStringRef)url, NULL,
                 CFSTR(" \t\r\n\"<>\\^`{}[]|"), kCFStringEncodingUTF8);
             NSString *recoveredURL = recovered ? [(__bridge NSString *)recovered copy] : nil;
             if (recovered) CFRelease(recovered);
-            if (recoveredURL.length) {
-                NSURL *recoveredParsed = [NSURL URLWithString:recoveredURL];
-                if (recoveredParsed && recoveredParsed.scheme.length && recoveredParsed.host.length) {
-                    finalURL = recoveredURL;
-                    parsed = recoveredParsed;
-                }
-            }
+            if (recoveredURL.length && [NSURL URLWithString:recoveredURL]) finalURL = recoveredURL;
         }
         NSLog(@"[OldEmby] playback URL for %@: %@", itemId, finalURL);
-        if (!parsed || !parsed.scheme.length || !parsed.host.length) {
+        // Only reject what NSURL genuinely cannot turn into a URL object.
+        // Do NOT additionally require scheme/host here: that check once
+        // rejected perfectly playable audio URLs and broke music playback.
+        if (![NSURL URLWithString:finalURL]) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"服务器返回的播放地址无法解析：%@", url]}]);
             return;
         }

@@ -53,6 +53,18 @@
 - (NSString *)baseURL {
     if (!self.host) return nil;
     NSString *u = self.host;
+    // trim surrounding whitespace: a host pasted with a stray space or newline
+    // produces a URL NSURL cannot parse at all.
+    u = [u stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!u.length) return nil;
+    // A host saved without a scheme (e.g. "192.168.1.10:8096") makes every
+    // playback URL built from it unparseable: NSURL reads "192.168.1.10" as
+    // the scheme and leaves the host empty. Older builds stored such values,
+    // so normalize here rather than trusting what is in NSUserDefaults.
+    NSString *lower = [u lowercaseString];
+    if (![lower hasPrefix:@"http://"] && ![lower hasPrefix:@"https://"]) {
+        u = [@"http://" stringByAppendingString:u];
+    }
     // trim trailing /
     while ([u hasSuffix:@"/"] && u.length > 1) u = [u substringToIndex:u.length-1];
     return u;
