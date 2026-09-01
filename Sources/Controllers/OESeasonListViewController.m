@@ -249,10 +249,18 @@ static const CGFloat kCastStripHeight = 110.0;
         self.seasons = seasons;
         [self.tableView reloadData];
         if (seasons.count == 1 && !self.didAutoPush) {
-            // Single-season series: go straight to its episode list on first
-            // load only, keeping this screen in the back stack.
+            // Replace this unseen intermediate screen instead of pushing on top
+            // of it, so a back action from episodes returns to the poster wall.
             self.didAutoPush = YES;
-            [self pushEpisodeListForSeason:seasons[0] animated:NO];
+            OEEpisodeListViewController *vc = [[OEEpisodeListViewController alloc] initWithSeries:self.series season:seasons[0]];
+            NSMutableArray *stack = [self.navigationController.viewControllers mutableCopy];
+            NSUInteger index = [stack indexOfObjectIdenticalTo:self];
+            if (index != NSNotFound) {
+                [stack replaceObjectAtIndex:index withObject:vc];
+                [self.navigationController setViewControllers:stack animated:NO];
+            } else {
+                [self.navigationController pushViewController:vc animated:NO];
+            }
             return;
         }
         [[self.tableView viewWithTag:995] removeFromSuperview];

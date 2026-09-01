@@ -93,7 +93,10 @@
         NSArray *items = [candidate isKindOfClass:[NSArray class]] ? candidate : nil;
         NSMutableArray *out = [NSMutableArray array];
         for (NSDictionary *d in items) {
-            if ([d isKindOfClass:[NSDictionary class]]) [out addObject:[OEEmbyItem itemWithDictionary:d]];
+            if (![d isKindOfClass:[NSDictionary class]]) continue;
+            OEEmbyItem *episode = [OEEmbyItem itemWithDictionary:d];
+            if (!episode.seriesId.length) episode.seriesId = self.series.itemId;
+            [out addObject:episode];
         }
         self.episodes = out;
         [self.tableView reloadData];

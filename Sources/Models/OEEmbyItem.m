@@ -75,6 +75,8 @@
     NSNumber *en = [dict objectForKey:@"IndexNumber"];
     if ([en isKindOfClass:[NSNumber class]]) it.episodeNumber = [en integerValue];
     it.indexNumber = it.episodeNumber;
+    id rawSeriesId = [dict objectForKey:@"SeriesId"];
+    it.seriesId = [rawSeriesId isKindOfClass:[NSString class]] ? rawSeriesId : nil;
     return it;
 }
 

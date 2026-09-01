@@ -139,7 +139,8 @@ static const CGFloat kCastStripHeight = 132.0;
 }
 
 - (void)loadCasts {
-    [[OEEmbyAPIClient sharedClient] fetchCastsForItem:self.item.itemId completion:^(id result, NSError *error) {
+    NSString *castItemId = self.item.seriesId.length ? self.item.seriesId : self.item.itemId;
+    [[OEEmbyAPIClient sharedClient] fetchCastsForItem:castItemId completion:^(id result, NSError *error) {
         if (error) {
             // Silently ignore cast errors - not critical for playback
             return;

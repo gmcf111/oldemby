@@ -25,16 +25,9 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
     return result;
 }
 
-// Emby builds playback URLs from file paths and item names, which on real
-// servers routinely contain spaces and non-ASCII (Chinese) characters.  iOS 6-9
-// [NSURL URLWithString:] returns nil for such a string, which surfaced as the
-// "服务器返回了无效的播放地址" error even though the URL was reachable.  This
-// percent-encodes only the bytes that are illegal in an already-formed URL
-// (space, control chars, and every non-ASCII byte) while leaving the URL
-// structure — scheme, host, path separators, query delimiters and any existing
-// %XX escapes — untouched, so we never double-encode a server-escaped value.
-// Printable ASCII (0x21-0x7E) is kept verbatim, which already preserves any
-// '%' and hex digits from a prior escape.
+// Emby may return transcoding URLs that contain raw file-name bytes.  iOS 6-9
+// NSURL rejects several of those characters, so retain only URI-safe bytes.
+// Existing %XX escapes are preserved to avoid double encoding server URLs.
 static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     if (urlString.length == 0) return urlString;
     NSData *bytes = [urlString dataUsingEncoding:NSUTF8StringEncoding];
@@ -43,11 +36,16 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     NSMutableString *out = [NSMutableString stringWithCapacity:urlString.length * 2];
     for (NSUInteger i = 0; i < bytes.length; i++) {
         unsigned char c = raw[i];
-        if (c >= 0x21 && c <= 0x7E) {
-            [out appendFormat:@"%c", c];
-        } else {
-            [out appendFormat:@"%%%02X", c];
-        }
+        BOOL isAlphaNumeric = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        BOOL isEscapedByte = c == '%' && i + 2 < bytes.length &&
+            ((raw[i + 1] >= '0' && raw[i + 1] <= '9') || (raw[i + 1] >= 'A' && raw[i + 1] <= 'F') || (raw[i + 1] >= 'a' && raw[i + 1] <= 'f')) &&
+            ((raw[i + 2] >= '0' && raw[i + 2] <= '9') || (raw[i + 2] >= 'A' && raw[i + 2] <= 'F') || (raw[i + 2] >= 'a' && raw[i + 2] <= 'f'));
+        BOOL isURISafe = isAlphaNumeric || c == '-' || c == '.' || c == '_' || c == '~' ||
+            c == '!' || c == '$' || c == '&' || c == '\'' || c == '(' || c == ')' ||
+            c == '*' || c == '+' || c == ',' || c == ';' || c == '=' || c == ':' ||
+            c == '@' || c == '/' || c == '?' || c == '[' || c == ']' || isEscapedByte;
+        if (isURISafe) [out appendFormat:@"%c", c];
+        else [out appendFormat:@"%%%02X", c];
     }
     return out;
 }
