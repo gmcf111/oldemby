@@ -77,6 +77,18 @@
     it.indexNumber = it.episodeNumber;
     id rawSeriesId = [dict objectForKey:@"SeriesId"];
     it.seriesId = [rawSeriesId isKindOfClass:[NSString class]] ? rawSeriesId : nil;
+    if (!it.seriesId.length && (it.itemType == OEEmbyItemTypeSeason || it.itemType == OEEmbyItemTypeEpisode)) {
+        id parentId = [dict objectForKey:@"ParentId"];
+        if ([parentId isKindOfClass:[NSString class]]) it.seriesId = parentId;
+    }
+    id rawSeriesTag = [dict objectForKey:@"SeriesPrimaryImageTag"];
+    it.seriesPrimaryImageTag = [rawSeriesTag isKindOfClass:[NSString class]] ? rawSeriesTag : nil;
+    if (!it.seriesPrimaryImageTag.length) {
+        id parentTag = [dict objectForKey:@"ParentPrimaryImageTag"];
+        if ([parentTag isKindOfClass:[NSString class]]) it.seriesPrimaryImageTag = parentTag;
+    }
+    id rawSeriesName = [dict objectForKey:@"SeriesName"];
+    it.seriesName = [rawSeriesName isKindOfClass:[NSString class]] ? rawSeriesName : nil;
     return it;
 }
 
@@ -98,14 +110,31 @@
 }
 
 - (NSString *)primaryImageURLWithHost:(NSString *)host maxWidth:(NSInteger)width maxHeight:(NSInteger)height {
-    if (!self.itemId || !self.imageTag) return nil;
     if (!host) return nil;
+    NSString *targetItemId = self.itemId;
+    NSString *targetTag = self.imageTag;
+
+    // 当自身没有封面且属于某个剧集时（例如某一季没有独立封面），默认回退到该剧集的封面
+    if (!targetTag.length) {
+        if (self.seriesId.length) {
+            targetItemId = self.seriesId;
+            targetTag = self.seriesPrimaryImageTag;
+        } else {
+            return nil;
+        }
+    }
+    if (!targetItemId.length) return nil;
+
     NSString *base = host;
-    while ([base hasSuffix:@"/"] && base.length>1) base=[base substringToIndex:base.length-1];
+    while ([base hasSuffix:@"/"] && base.length > 1) base = [base substringToIndex:base.length - 1];
     BOOL hasEmbyPrefix = [base hasSuffix:@"/emby"];
     NSString *root = hasEmbyPrefix ? [base substringToIndex:base.length - 5] : base;
-    NSString *escapedTag = self.imageTag ? (NSString *)CFBridgingRelease(CFURLCreateStringByAddingPercentEscapes(NULL, (__bridge CFStringRef)self.imageTag, NULL, CFSTR(":/?#[]@!$&'()*+,;=%"), kCFStringEncodingUTF8)) : @"";
-    NSMutableString *url = [NSMutableString stringWithFormat:@"%@/emby/Items/%@/Images/Primary?Tag=%@&maxWidth=%ld", root, self.itemId, escapedTag ?: @"", (long)width];
+    NSString *escapedTag = targetTag.length ? (NSString *)CFBridgingRelease(CFURLCreateStringByAddingPercentEscapes(NULL, (__bridge CFStringRef)targetTag, NULL, CFSTR(":/?#[]@!$&'()*+,;=%"), kCFStringEncodingUTF8)) : @"";
+    NSMutableString *url = [NSMutableString stringWithFormat:@"%@/emby/Items/%@/Images/Primary?", root, targetItemId];
+    if (escapedTag.length) {
+        [url appendFormat:@"Tag=%@&", escapedTag];
+    }
+    [url appendFormat:@"maxWidth=%ld", (long)width];
     if (height > 0) [url appendFormat:@"&maxHeight=%ld", (long)height];
     [url appendString:@"&quality=90"];
     return url;

@@ -261,6 +261,12 @@ static const CGFloat kCastStripHeight = 132.0;
         NSArray *seasons = [result isKindOfClass:[NSArray class]] ? result : @[];
         for (OEEmbyItem *season in seasons) {
             if (!season.seriesId.length) season.seriesId = self.series.itemId;
+            if (!season.seriesPrimaryImageTag.length && self.series.imageTag.length) {
+                season.seriesPrimaryImageTag = self.series.imageTag;
+            }
+            if (season.primaryImageAspectRatio <= 0 && self.series.primaryImageAspectRatio > 0) {
+                season.primaryImageAspectRatio = self.series.primaryImageAspectRatio;
+            }
         }
         self.seasons = seasons;
         [self.tableView reloadData];

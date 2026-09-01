@@ -245,7 +245,7 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     NSMutableDictionary *p = [NSMutableDictionary dictionary];
     if (parentId) p[@"ParentId"] = parentId;
     if (types) p[@"IncludeItemTypes"] = types;
-    p[@"Fields"] = @"PrimaryImageAspectRatio,Overview,RunTimeTicks,MediaStreams";
+    p[@"Fields"] = @"PrimaryImageAspectRatio,Overview,RunTimeTicks,MediaStreams,SeriesPrimaryImageTag,SeriesId";
     p[@"ImageTypeLimit"] = @"1";
     p[@"StartIndex"] = @(start).stringValue;
     p[@"Limit"] = @(limit).stringValue;
@@ -283,7 +283,7 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     if (!c.userId) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }
     NSString *path = [NSString stringWithFormat:@"/Shows/%@/Seasons", seriesId];
     NSDictionary *params = @{@"UserId": c.userId,
-                             @"Fields": @"PrimaryImageAspectRatio,Overview,RunTimeTicks",
+                             @"Fields": @"PrimaryImageAspectRatio,Overview,RunTimeTicks,SeriesPrimaryImageTag,SeriesId",
                              @"ImageTypeLimit": @"1"};
     [self GET:path params:params completion:^(id result, NSError *error){
         if (error) { if (completion) completion(nil, error); return; }

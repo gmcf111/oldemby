@@ -35,6 +35,8 @@ typedef NS_ENUM(NSInteger, OEEmbyItemType) {
 @property (nonatomic, assign) NSInteger indexNumber;
 // Episodes and Seasons expose their parent series through Emby's SeriesId.
 @property (nonatomic, copy) NSString *seriesId;
+@property (nonatomic, copy) NSString *seriesName;
+@property (nonatomic, copy) NSString *seriesPrimaryImageTag;
 
 + (instancetype)itemWithDictionary:(NSDictionary *)dict;
 + (OEEmbyItemType)typeFromString:(NSString *)s;
