@@ -209,8 +209,12 @@
     if ([url hasPrefix:@"http"]) return url;
     NSString *base = host;
     if (!base.length) return nil;
-    while ([base hasSuffix:@"/"] && base.length>1) base=[base substringToIndex:base.length-1];
+    while ([base hasSuffix:@"/"] && base.length > 1) base = [base substringToIndex:base.length - 1];
     if (![url hasPrefix:@"/"]) url = [@"/" stringByAppendingString:url];
+    // Avoid duplicate /emby/emby if both base host and server URL carry the prefix
+    if ([base hasSuffix:@"/emby"] && [url hasPrefix:@"/emby/"]) {
+        url = [url substringFromIndex:5];
+    }
     return [base stringByAppendingString:url];
 }
 

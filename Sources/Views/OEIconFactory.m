@@ -29,34 +29,75 @@
             break;
         }
         case OEIconTypeMusic: {
+            // Single eighth note — clean oval head + stem + flag, reads well at 30pt.
+            CGContextSetLineWidth(ctx, MAX(1.4, w * 0.075));
+            CGFloat headW = w * 0.36, headH = h * 0.26;
+            CGRect head = CGRectMake(w * 0.18, h * 0.55, headW, headH);
+            // Slight tilt for a more musical feel
+            CGContextSaveGState(ctx);
+            CGContextTranslateCTM(ctx, CGRectGetMidX(head), CGRectGetMidY(head));
+            CGContextRotateCTM(ctx, -0.18);
+            CGContextTranslateCTM(ctx, -CGRectGetMidX(head), -CGRectGetMidY(head));
+            CGContextFillEllipseInRect(ctx, head);
+            CGContextRestoreGState(ctx);
+            CGFloat stemX = w * 0.51;
+            CGFloat stemTop = h * 0.18;
+            CGFloat stemBot = h * 0.67;
             CGContextBeginPath(ctx);
-            CGContextMoveToPoint(ctx, w * 0.60, h * 0.18);
-            CGContextAddLineToPoint(ctx, w * 0.60, h * 0.68);
+            CGContextMoveToPoint(ctx, stemX, stemBot);
+            CGContextAddLineToPoint(ctx, stemX, stemTop);
             CGContextStrokePath(ctx);
+            // Flag — filled teardrop curve off the stem top
             CGContextBeginPath(ctx);
-            CGContextMoveToPoint(ctx, w * 0.60, h * 0.20);
-            CGContextAddLineToPoint(ctx, w * 0.87, h * 0.12);
-            CGContextStrokePath(ctx);
-            CGContextFillEllipseInRect(ctx, CGRectMake(w * 0.17, h * 0.56, w * 0.30, h * 0.25));
-            CGContextFillEllipseInRect(ctx, CGRectMake(w * 0.47, h * 0.56, w * 0.30, h * 0.25));
-            CGContextBeginPath(ctx);
-            CGContextMoveToPoint(ctx, w * 0.60, h * 0.46);
-            CGContextAddLineToPoint(ctx, w * 0.87, h * 0.38);
-            CGContextAddLineToPoint(ctx, w * 0.87, h * 0.62);
-            CGContextStrokePath(ctx);
+            CGContextMoveToPoint(ctx, stemX, stemTop);
+            CGContextAddCurveToPoint(ctx, stemX + w * 0.22, stemTop + h * 0.04,
+                                     stemX + w * 0.24, stemTop + h * 0.18,
+                                     stemX + w * 0.02, stemTop + h * 0.22);
+            CGContextAddLineToPoint(ctx, stemX, stemTop + h * 0.12);
+            CGContextAddCurveToPoint(ctx, stemX + w * 0.10, stemTop + h * 0.10,
+                                     stemX + w * 0.08, stemTop + h * 0.02,
+                                     stemX, stemTop);
+            CGContextClosePath(ctx);
+            CGContextFillPath(ctx);
             break;
         }
         case OEIconTypeSettings: {
+            // Proper gear — outer ring + 8 rectangular teeth + inner hub.
             CGFloat cx = w / 2.0, cy = h / 2.0;
-            CGContextStrokeEllipseInRect(ctx, CGRectMake(w * 0.27, h * 0.27, w * 0.46, h * 0.46));
-            CGContextStrokeEllipseInRect(ctx, CGRectMake(w * 0.42, h * 0.42, w * 0.16, h * 0.16));
+            CGFloat outerR = w * 0.25;
+            CGFloat toothW = w * 0.16;
+            CGFloat toothH = w * 0.09;
+            CGFloat toothR = outerR + toothH * 0.38;
+            // Teeth as filled rects arranged radially
             for (NSInteger i = 0; i < 8; i++) {
                 CGFloat a = (CGFloat)i * M_PI / 4.0;
+                CGContextSaveGState(ctx);
+                CGContextTranslateCTM(ctx, cx, cy);
+                CGContextRotateCTM(ctx, a);
+                CGRect tooth = CGRectMake(toothR, -toothW / 2.0, toothH, toothW);
+                CGFloat cr = toothW * 0.22;
                 CGContextBeginPath(ctx);
-                CGContextMoveToPoint(ctx, cx + cos(a) * w * 0.30, cy + sin(a) * h * 0.30);
-                CGContextAddLineToPoint(ctx, cx + cos(a) * w * 0.43, cy + sin(a) * h * 0.43);
-                CGContextStrokePath(ctx);
+                CGContextMoveToPoint(ctx, tooth.origin.x + cr, tooth.origin.y);
+                CGContextAddLineToPoint(ctx, tooth.origin.x + tooth.size.width - cr, tooth.origin.y);
+                CGContextAddArcToPoint(ctx, tooth.origin.x + tooth.size.width, tooth.origin.y,
+                                       tooth.origin.x + tooth.size.width, tooth.origin.y + cr, cr);
+                CGContextAddLineToPoint(ctx, tooth.origin.x + tooth.size.width, tooth.origin.y + tooth.size.height - cr);
+                CGContextAddArcToPoint(ctx, tooth.origin.x + tooth.size.width, tooth.origin.y + tooth.size.height,
+                                       tooth.origin.x + tooth.size.width - cr, tooth.origin.y + tooth.size.height, cr);
+                CGContextAddLineToPoint(ctx, tooth.origin.x + cr, tooth.origin.y + tooth.size.height);
+                CGContextAddArcToPoint(ctx, tooth.origin.x, tooth.origin.y + tooth.size.height,
+                                       tooth.origin.x, tooth.origin.y + tooth.size.height - cr, cr);
+                CGContextAddLineToPoint(ctx, tooth.origin.x, tooth.origin.y + cr);
+                CGContextAddArcToPoint(ctx, tooth.origin.x, tooth.origin.y,
+                                       tooth.origin.x + cr, tooth.origin.y, cr);
+                CGContextClosePath(ctx);
+                CGContextFillPath(ctx);
+                CGContextRestoreGState(ctx);
             }
+            CGContextSetLineWidth(ctx, MAX(1.4, w * 0.07));
+            CGContextStrokeEllipseInRect(ctx, CGRectMake(cx - outerR, cy - outerR, outerR * 2, outerR * 2));
+            CGFloat innerR = w * 0.11;
+            CGContextStrokeEllipseInRect(ctx, CGRectMake(cx - innerR, cy - innerR, innerR * 2, innerR * 2));
             break;
         }
         case OEIconTypePlay: {

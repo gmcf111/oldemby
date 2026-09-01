@@ -17,6 +17,13 @@
     if ((self = [super init])) {
         _memCache = [[NSCache alloc] init];
         _memCache.countLimit = 80;
+        // iPad 2 has 256MB RAM and runs alongside MobileSubstrate/keyboard
+        // tweaks. Decoded posters (220x330 = ~290KB each) and 400x600 covers
+        // (~1MB) blow past usable memory at the count limit alone, which
+        // pushes the OS to purge UIImage backing data and eventually jetsam
+        // the app. A ~20MB total cost cap lets NSCache evict decoded images
+        // under pressure before the system does something drastic.
+        _memCache.totalCostLimit = 20 * 1024 * 1024;
     }
     return self;
 }
@@ -33,7 +40,11 @@
     [NSURLConnection sendAsynchronousRequest:req queue:[NSOperationQueue mainQueue] completionHandler:^(NSURLResponse *resp, NSData *data, NSError *err){
         if (err || !data) { if (completion) completion(placeholder); return; }
         UIImage *img = [UIImage imageWithData:data];
-        if (img) [self.memCache setObject:img forKey:url];
+        if (img) {
+            NSInteger cost = (NSInteger)(img.size.width * img.size.height) * 4;
+            if (cost <= 0) cost = 1;
+            [self.memCache setObject:img forKey:url cost:cost];
+        }
         if (completion) completion(img ?: placeholder);
     }];
 }

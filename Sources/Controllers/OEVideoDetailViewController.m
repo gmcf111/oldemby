@@ -301,14 +301,40 @@ static const CGFloat kCastStripHeight = 132.0;
 }
 
 - (void)finishDismissingPlayer {
-    self.activePlayerController = nil;
+    MPMoviePlayerViewController *controller = self.activePlayerController;
     self.dismissingPlayer = NO;
     if (self.pendingFinishReason == MPMovieFinishReasonPlaybackError) {
-        [self showPlaybackError:self.pendingPlaybackError.localizedDescription ?: @"系统播放器无法播放该 HLS 流，请检查 Emby 转码日志"];
+        NSString *msg = self.pendingPlaybackError.localizedDescription;
+        if (!msg.length) msg = @"系统播放器无法播放该 HLS 流，请检查 Emby 转码日志与 HLS 版本设置";
+        [self showPlaybackError:msg];
+    } else if (self.pendingFinishReason == MPMovieFinishReasonUserExited) {
+        self.statusLabel.text = @"已退出播放";
+    } else if (self.pendingFinishReason == MPMovieFinishReasonPlaybackEnded) {
+        self.statusLabel.text = @"播放结束";
     } else if (!self.playerBecamePlayable) {
-        self.statusLabel.text = @"播放器未取得可播放数据";
+        // The player gave up before reaching a playable state without an
+        // explicit error. Surface whatever the system attached (if anything)
+        // so the failure reason is visible instead of a generic status line.
+        NSString *detail = self.pendingPlaybackError.localizedDescription;
+        [self showPlaybackError:detail.length
+            ? [NSString stringWithFormat:@"播放器未取得可播放数据：%@", detail]
+            : @"播放器未取得可播放数据（请确认 Emby 转码为 H.264+AAC 的 HLS，且 HLS 版本兼容 iOS 6）"];
+    } else {
+        self.statusLabel.text = @"播放结束";
     }
     self.pendingPlaybackError = nil;
+    // Hold the controller for one more run-loop pass. iOS 6 finalizes
+    // MPMoviePlayerController's view/layer teardown on the next CA commit; if
+    // the strong property above was the last retain, releasing it now leaves
+    // that commit messaging a freed object -> EXC_BAD_ACCESS on the main run
+    // loop observer. Clearing the property on the next tick avoids that.
+    if (controller) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.activePlayerController = nil;
+        });
+    } else {
+        self.activePlayerController = nil;
+    }
 }
 
 - (void)movieFinished:(NSNotification *)notification {
@@ -344,6 +370,14 @@ static const CGFloat kCastStripHeight = 132.0;
     ++self.playRequestGeneration;
     [self removePlayerObserversForPlayer:self.activePlayerController.moviePlayer];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    MPMoviePlayerViewController *controller = self.activePlayerController;
+    // Same deferred-release rationale as finishDismissingPlayer: let iOS 6's
+    // MPMoviePlayer teardown commit finish before the controller is
+    // deallocated. The block captures the controller (not self, which is being
+    // deallocated) and releases it on the next run-loop tick.
+    if (controller) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [controller class]; });
+    }
 }
 
 @end

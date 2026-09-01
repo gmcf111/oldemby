@@ -11,6 +11,9 @@
 @property (nonatomic, strong) UILabel *artistLabel;
 @property (nonatomic, strong) UIButton *playButton;
 @property (nonatomic, strong) UIView *progressView;
+@property (nonatomic, strong) UIImage *playIcon;
+@property (nonatomic, strong) UIImage *pauseIcon;
+@property (nonatomic, assign) BOOL showingPauseIcon;
 @end
 
 @implementation OEMiniPlayerView
@@ -45,7 +48,7 @@
         [self addTarget:self action:@selector(openPlayer) forControlEvents:UIControlEventTouchUpInside];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:kNotificationMusicPlaybackStateChanged object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:kNotificationMusicPlaybackProgressChanged object:nil];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:kNotificationThemeDidChange object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(themeChanged) name:kNotificationThemeDidChange object:nil];
         [self applyTheme];
         [self refresh];
     }
@@ -58,6 +61,20 @@
     self.artworkView.backgroundColor = [OETheme imagePlaceholderColor];
     self.titleLabel.textColor = [OETheme primaryTextColor];
     self.artistLabel.textColor = [OETheme secondaryTextColor];
+    // Re-render the play/pause glyphs only when the theme changes; refresh()
+    // runs every 0.5s from the progress notification and must not rebuild
+    // bitmap contexts on each tick.
+    UIColor *iconColor = [OETheme primaryTextColor];
+    self.playIcon = [OEIconFactory imageForIconType:OEIconTypePlay size:CGSizeMake(22, 22) color:iconColor];
+    self.pauseIcon = [OEIconFactory imageForIconType:OEIconTypePause size:CGSizeMake(22, 22) color:iconColor];
+    BOOL isPause = [OEMusicPlaybackManager sharedManager].isPlaying;
+    [self.playButton setImage:isPause ? self.pauseIcon : self.playIcon forState:UIControlStateNormal];
+    self.showingPauseIcon = isPause;
+}
+
+- (void)themeChanged {
+    [self applyTheme];
+    [self refresh];
 }
 
 - (void)layoutSubviews {
@@ -74,14 +91,16 @@
 }
 
 - (void)refresh {
-    [self applyTheme];
     OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
     OEEmbyItem *item = manager.currentItem;
     self.titleLabel.text = item.name ?: @"未播放";
     self.artistLabel.text = manager.statusText ?: item.artist ?: @"";
     self.artworkView.image = manager.artwork;
-    OEIconType icon = manager.isPlaying ? OEIconTypePause : OEIconTypePlay;
-    [self.playButton setImage:[OEIconFactory imageForIconType:icon size:CGSizeMake(22, 22) color:[OETheme primaryTextColor]] forState:UIControlStateNormal];
+    BOOL isPause = manager.isPlaying;
+    if (isPause != self.showingPauseIcon) {
+        [self.playButton setImage:isPause ? self.pauseIcon : self.playIcon forState:UIControlStateNormal];
+        self.showingPauseIcon = isPause;
+    }
     [self setNeedsLayout];
 }
 

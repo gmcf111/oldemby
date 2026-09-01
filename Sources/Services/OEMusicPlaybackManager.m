@@ -138,7 +138,12 @@
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
     if (object != self.playerItem) return;
+    // Snapshot the generation here; if the item is replaced (cleanupPlayer +
+    // new beginPlayingURL bumps it) before the main-queue block runs, the
+    // stale callback must not mutate state for the new item.
+    NSUInteger generation = self.generation;
     void (^applyState)(void) = ^{
+        if (generation != self.generation) return;
         if ([keyPath isEqualToString:@"status"]) {
             if (self.playerItem.status == AVPlayerItemStatusReadyToPlay) {
                 // Do not force playback when the user paused during buffering.

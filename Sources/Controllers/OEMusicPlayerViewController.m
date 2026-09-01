@@ -300,8 +300,12 @@
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
+    // Defer the visibility notification until the pop animation has started so
+    // OERootTabBarController sees the music library (not this player) on top
+    // and re-shows the mini player. Post with object:nil and avoid capturing
+    // self so this VC can deallocate promptly.
     dispatch_async(dispatch_get_main_queue(), ^{
-        [[NSNotificationCenter defaultCenter] postNotificationName:kNotificationMusicFullPlayerVisibilityChanged object:self];
+        [[NSNotificationCenter defaultCenter] postNotificationName:kNotificationMusicFullPlayerVisibilityChanged object:nil];
     });
 }
 
