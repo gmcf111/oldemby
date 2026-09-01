@@ -5,6 +5,7 @@ typedef NS_ENUM(NSInteger, OEEmbyItemType) {
     OEEmbyItemTypeMovie,
     OEEmbyItemTypeEpisode,
     OEEmbyItemTypeSeries,
+    OEEmbyItemTypeSeason,
     OEEmbyItemTypeAudio,
     OEEmbyItemTypeAlbum,
     OEEmbyItemTypeArtist,

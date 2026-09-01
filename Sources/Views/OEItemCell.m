@@ -86,9 +86,10 @@
         CGFloat textX = imageWidth + 10;
         // Bold episode number ("12.") followed by the regular episode name.
         CGFloat numberW = 0;
-        if (!_episodeNumberLabel.hidden) {
-            numberW = ceil([_episodeNumberLabel.text sizeWithFont:_episodeNumberLabel.font].width) + 4;
-            numberW = MIN(numberW, w * 0.2);
+        if (!_episodeNumberLabel.hidden && _episodeNumberLabel.text.length > 0) {
+            UIFont *numFont = _episodeNumberLabel.font ?: [UIFont boldSystemFontOfSize:15];
+            numberW = ceil([_episodeNumberLabel.text sizeWithFont:numFont].width) + 4;
+            numberW = MIN(numberW, MAX(0, w * 0.2));
             _episodeNumberLabel.frame = CGRectMake(textX, 16, numberW, 20);
         }
         _titleLabel.frame = CGRectMake(textX + numberW, 16, MAX(0, w - textX - numberW - 10), 20);

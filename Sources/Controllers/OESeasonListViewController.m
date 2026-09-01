@@ -16,7 +16,7 @@ static const CGFloat kHeaderCoverMaxWidth = 160.0;
 static const CGFloat kHeaderCoverMinWidth = 100.0;
 static const CGFloat kHeaderCoverMinHeight = 150.0;
 static const CGFloat kHeaderCoverMaxHeight = 240.0;
-static const CGFloat kCastStripHeight = 110.0;
+static const CGFloat kCastStripHeight = 132.0;
 
 @interface OESeasonListViewController ()
 @property (nonatomic, strong) OEEmbyItem *series;
@@ -32,6 +32,7 @@ static const CGFloat kCastStripHeight = 110.0;
 @property (nonatomic, assign) NSUInteger loadGeneration;
 @property (nonatomic, assign) BOOL castsLoaded;
 @property (nonatomic, assign) BOOL didAutoPush;
+@property (nonatomic, assign) BOOL isRelayoutingHeader;
 @end
 
 @implementation OESeasonListViewController
@@ -74,7 +75,7 @@ static const CGFloat kCastStripHeight = 110.0;
     CGFloat coverHeight = coverWidth / (aspectRatio > 0 ? aspectRatio : (2.0 / 3.0));
     coverHeight = MAX(kHeaderCoverMinHeight, MIN(coverHeight, kHeaderCoverMaxHeight));
 
-    CGFloat rightWidth = w - coverWidth - 3 * margin;
+    CGFloat rightWidth = MAX(1.0, w - coverWidth - 3 * margin);
     NSString *overviewText = self.series.overview ?: @"暂无简介";
     CGSize textSize = [overviewText sizeWithFont:[UIFont systemFontOfSize:12]
                                constrainedToSize:CGSizeMake(rightWidth, CGFLOAT_MAX)
@@ -121,7 +122,7 @@ static const CGFloat kCastStripHeight = 110.0;
     [_headerView addSubview:_overviewLabel];
 
     CGFloat castHdrY = margin + coverSectionHeight + 16;
-    _castHeaderLabel = [[UILabel alloc] initWithFrame:CGRectMake(margin, castHdrY, w - 2 * margin, 20)];
+    _castHeaderLabel = [[UILabel alloc] initWithFrame:CGRectMake(margin, castHdrY, MAX(1.0, w - 2 * margin), 20)];
     _castHeaderLabel.font = [UIFont boldSystemFontOfSize:14];
     _castHeaderLabel.text = @"演职人员";
     _castHeaderLabel.textColor = [OETheme primaryTextColor];
@@ -129,7 +130,7 @@ static const CGFloat kCastStripHeight = 110.0;
     [_headerView addSubview:_castHeaderLabel];
 
     CGFloat castY = CGRectGetMaxY(_castHeaderLabel.frame) + 6;
-    _castStrip = [[OECastStripView alloc] initWithFrame:CGRectMake(margin, castY, w - 2 * margin, kCastStripHeight)];
+    _castStrip = [[OECastStripView alloc] initWithFrame:CGRectMake(margin, castY, MAX(1.0, w - 2 * margin), kCastStripHeight)];
     _castStrip.casts = @[];
     [_headerView addSubview:_castStrip];
 
@@ -178,6 +179,9 @@ static const CGFloat kCastStripHeight = 110.0;
 }
 
 - (void)relayoutHeader {
+    if (self.isRelayoutingHeader) return;
+    self.isRelayoutingHeader = YES;
+
     CGFloat w = self.view.bounds.size.width;
     if (w < 1) w = [UIScreen mainScreen].bounds.size.width;
     CGFloat margin = kHeaderSidePadding;
@@ -188,12 +192,14 @@ static const CGFloat kCastStripHeight = 110.0;
     CGFloat coverHeight = coverWidth / (aspectRatio > 0 ? aspectRatio : (2.0 / 3.0));
     coverHeight = MAX(kHeaderCoverMinHeight, MIN(coverHeight, kHeaderCoverMaxHeight));
 
-    CGFloat rightWidth = w - coverWidth - 3 * margin;
+    CGFloat rightWidth = MAX(1.0, w - coverWidth - 3 * margin);
     CGFloat rightX = margin + coverWidth + margin;
 
-    CGSize textSize = [self.overviewLabel.text sizeWithFont:self.overviewLabel.font
-                                          constrainedToSize:CGSizeMake(rightWidth, CGFLOAT_MAX)
-                                              lineBreakMode:NSLineBreakByWordWrapping];
+    NSString *ovText = self.overviewLabel.text ?: @"";
+    UIFont *ovFont = self.overviewLabel.font ?: [UIFont systemFontOfSize:12];
+    CGSize textSize = [ovText sizeWithFont:ovFont
+                         constrainedToSize:CGSizeMake(rightWidth, CGFLOAT_MAX)
+                             lineBreakMode:NSLineBreakByWordWrapping];
     CGFloat overviewHeight = MAX(ceil(textSize.height), coverHeight - 60);
 
     self.cover.frame = CGRectMake(margin, margin, coverWidth, coverHeight);
@@ -203,16 +209,21 @@ static const CGFloat kCastStripHeight = 110.0;
 
     CGFloat coverSectionHeight = MAX(coverHeight, overviewHeight + 60);
     CGFloat castHdrY = margin + coverSectionHeight + 16;
-    self.castHeaderLabel.frame = CGRectMake(margin, castHdrY, w - 2 * margin, 20);
+    self.castHeaderLabel.frame = CGRectMake(margin, castHdrY, MAX(1.0, w - 2 * margin), 20);
     CGFloat castY = CGRectGetMaxY(self.castHeaderLabel.frame) + 6;
-    self.castStrip.frame = CGRectMake(margin, castY, w - 2 * margin, kCastStripHeight);
+    self.castStrip.frame = CGRectMake(margin, castY, MAX(1.0, w - 2 * margin), kCastStripHeight);
 
     CGFloat headerHeight = margin + coverSectionHeight + 16 + 20 + 6 + kCastStripHeight + margin;
-    self.headerView.frame = CGRectMake(0, 0, w, headerHeight);
+    CGRect newFrame = CGRectMake(0, 0, w, headerHeight);
 
-    // Re-assign tableHeaderView to force the table to pick up new height
-    self.tableView.tableHeaderView = nil;
-    self.tableView.tableHeaderView = self.headerView;
+    if (!CGSizeEqualToSize(self.headerView.frame.size, newFrame.size)) {
+        self.headerView.frame = newFrame;
+        // Re-assign tableHeaderView to force the table to pick up new height
+        self.tableView.tableHeaderView = nil;
+        self.tableView.tableHeaderView = self.headerView;
+    }
+
+    self.isRelayoutingHeader = NO;
 }
 
 - (void)applyTheme {
@@ -230,7 +241,9 @@ static const CGFloat kCastStripHeight = 110.0;
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     self.tableView.frame = self.view.bounds;
-    if (self.headerView) [self relayoutHeader];
+    if (self.headerView && fabs(self.headerView.frame.size.width - self.view.bounds.size.width) > 1.0) {
+        [self relayoutHeader];
+    }
 }
 
 - (void)loadData {
@@ -246,21 +259,14 @@ static const CGFloat kCastStripHeight = 110.0;
             return;
         }
         NSArray *seasons = [result isKindOfClass:[NSArray class]] ? result : @[];
+        for (OEEmbyItem *season in seasons) {
+            if (!season.seriesId.length) season.seriesId = self.series.itemId;
+        }
         self.seasons = seasons;
         [self.tableView reloadData];
         if (seasons.count == 1 && !self.didAutoPush) {
-            // Replace this unseen intermediate screen instead of pushing on top
-            // of it, so a back action from episodes returns to the poster wall.
             self.didAutoPush = YES;
-            OEEpisodeListViewController *vc = [[OEEpisodeListViewController alloc] initWithSeries:self.series season:seasons[0]];
-            NSMutableArray *stack = [self.navigationController.viewControllers mutableCopy];
-            NSUInteger index = [stack indexOfObjectIdenticalTo:self];
-            if (index != NSNotFound) {
-                [stack replaceObjectAtIndex:index withObject:vc];
-                [self.navigationController setViewControllers:stack animated:NO];
-            } else {
-                [self.navigationController pushViewController:vc animated:NO];
-            }
+            [self pushEpisodeListForSeason:seasons[0] animated:NO];
             return;
         }
         [[self.tableView viewWithTag:995] removeFromSuperview];
@@ -309,6 +315,10 @@ static const CGFloat kCastStripHeight = 110.0;
     [self pushEpisodeListForSeason:season animated:YES];
 }
 
-- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
+- (void)dealloc {
+    _tableView.dataSource = nil;
+    _tableView.delegate = nil;
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
 
 @end

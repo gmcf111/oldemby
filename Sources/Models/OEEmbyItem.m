@@ -85,6 +85,7 @@
     if ([s isEqualToString:@"Movie"]) return OEEmbyItemTypeMovie;
     if ([s isEqualToString:@"Episode"]) return OEEmbyItemTypeEpisode;
     if ([s isEqualToString:@"Series"]) return OEEmbyItemTypeSeries;
+    if ([s isEqualToString:@"Season"]) return OEEmbyItemTypeSeason;
     if ([s isEqualToString:@"Audio"]) return OEEmbyItemTypeAudio;
     if ([s isEqualToString:@"MusicAlbum"]) return OEEmbyItemTypeAlbum;
     if ([s isEqualToString:@"MusicArtist"]) return OEEmbyItemTypeArtist;

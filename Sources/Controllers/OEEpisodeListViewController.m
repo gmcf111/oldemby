@@ -74,9 +74,32 @@
     }
     NSString *resetTitle = self.season.name ?: (self.series.name ?: @"选集");
     self.title = @"加载中...";
+
+    NSString *seriesId = self.series.itemId.length ? self.series.itemId : self.season.seriesId;
+    if (!seriesId.length && self.season.itemId.length) {
+        // Fallback: query episodes by season ParentId
+        [[OEEmbyAPIClient sharedClient] fetchItemsInParent:self.season.itemId itemTypes:@"Episode" startIndex:0 limit:500 sortBy:@"IndexNumber" recursive:NO completion:^(id result, NSError *error) {
+            if (generation != self.loadGeneration) return;
+            self.title = resetTitle;
+            if (error) {
+                UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"加载失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
+                [av show];
+                return;
+            }
+            NSArray *items = [result isKindOfClass:[NSArray class]] ? result : @[];
+            for (OEEmbyItem *ep in items) {
+                if (!ep.seriesId.length) ep.seriesId = seriesId;
+            }
+            self.episodes = items;
+            [self.tableView reloadData];
+            [self updateEmptyState];
+        }];
+        return;
+    }
+
     // Emby: GET /Shows/{seriesId}/Episodes?SeasonId=... returns the season's
     // episodes ordered by episode number.
-    NSString *path = [NSString stringWithFormat:@"/Shows/%@/Episodes", self.series.itemId];
+    NSString *path = [NSString stringWithFormat:@"/Shows/%@/Episodes", seriesId ?: @""];
     NSMutableDictionary *params = [@{@"UserId": c.userId,
                              @"Fields": @"PrimaryImageAspectRatio,Overview,RunTimeTicks",
                              @"ImageTypeLimit": @"1"} mutableCopy];
@@ -95,22 +118,26 @@
         for (NSDictionary *d in items) {
             if (![d isKindOfClass:[NSDictionary class]]) continue;
             OEEmbyItem *episode = [OEEmbyItem itemWithDictionary:d];
-            if (!episode.seriesId.length) episode.seriesId = self.series.itemId;
+            if (!episode.seriesId.length) episode.seriesId = seriesId;
             [out addObject:episode];
         }
         self.episodes = out;
         [self.tableView reloadData];
-        [[self.tableView viewWithTag:997] removeFromSuperview];
-        if (self.episodes.count==0) {
-            UILabel *empty = [[UILabel alloc] initWithFrame:CGRectMake(0, 100, self.view.bounds.size.width, 40)];
-            empty.text = @"暂无剧集";
-            empty.tag = 997;
-            empty.textAlignment = NSTextAlignmentCenter;
-            empty.textColor = [OETheme secondaryTextColor];
-            empty.backgroundColor = [UIColor clearColor];
-            [self.tableView addSubview:empty];
-        }
+        [self updateEmptyState];
     }];
+}
+
+- (void)updateEmptyState {
+    [[self.tableView viewWithTag:997] removeFromSuperview];
+    if (self.episodes.count == 0) {
+        UILabel *empty = [[UILabel alloc] initWithFrame:CGRectMake(0, 100, self.view.bounds.size.width, 40)];
+        empty.text = @"暂无剧集";
+        empty.tag = 997;
+        empty.textAlignment = NSTextAlignmentCenter;
+        empty.textColor = [OETheme secondaryTextColor];
+        empty.backgroundColor = [UIColor clearColor];
+        [self.tableView addSubview:empty];
+    }
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.episodes.count; }
@@ -120,7 +147,8 @@
     OEItemCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) cell = [[OEItemCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
     cell.episodeLayout = YES;
-    OEEmbyItem *it = self.episodes[indexPath.row];
+    OEEmbyItem *it = (indexPath.row < (NSInteger)self.episodes.count) ? self.episodes[indexPath.row] : nil;
+    if (!it) return cell;
     [cell configureWithItem:it episodeNumber:it.episodeNumber];
     // Emby-web style: bold "N." prefix + episode name.
     cell.titleLabel.text = it.name ?: @"未命名";
@@ -134,11 +162,16 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.row >= (NSInteger)self.episodes.count) return;
     OEEmbyItem *it = self.episodes[indexPath.row];
     OEVideoDetailViewController *vc = [[OEVideoDetailViewController alloc] initWithItem:it];
     [self.navigationController pushViewController:vc animated:YES];
 }
 
-- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
+- (void)dealloc {
+    _tableView.dataSource = nil;
+    _tableView.delegate = nil;
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
 
 @end
