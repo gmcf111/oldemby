@@ -174,10 +174,23 @@
     if (!src) return nil;
     NSString *msId = [src[@"Id"] isKindOfClass:[NSString class]] ? src[@"Id"] : ([src[@"ETag"] isKindOfClass:[NSString class]] ? src[@"ETag"] : @"");
     if (outId) *outId = msId;
-    // A transcode request must receive an explicit server-generated URL.  A
-    // generic /Videos/.../stream fallback is commonly progressive MP4 and may
-    // stall forever while a live transcode is still being produced on iOS 6.
-    if (!url.length && ![OETranscodeSettings sharedSettings].directPlay && !isAudio) return nil;
+    if (!url.length && ![OETranscodeSettings sharedSettings].directPlay && !isAudio) {
+        // Some servers (notably Emby 4.9 with selective profiles) answer a
+        // transcode PlaybackInfo without any TranscodingUrl.  Official
+        // clients do not give up there: they build the canonical HLS master
+        // endpoint themselves and the server starts transcoding on request.
+        // This mirrors Emby web / Kodi: /Videos/{id}/master.m3u8 with the
+        // media source and codec constraints in the query string.  api_key is
+        // appended by the caller (OEEmbyAPIClient fetchStreamURLForItem).
+        NSString *resolvedItemId = itemId ?: response[@"ItemId"] ?: @"";
+        if (!resolvedItemId.length) return nil;
+        OETranscodeSettings *s = [OETranscodeSettings sharedSettings];
+        OEServerConfig *config = [OEServerConfig sharedConfig];
+        url = [NSString stringWithFormat:@"/Videos/%@/master.m3u8?MediaSourceId=%@&DeviceId=%@&VideoCodec=h264&AudioCodec=aac&VideoBitrate=%ld&AudioBitrate=%ld&MaxWidth=%ld&MaxHeight=%ld&TranscodingMaxAudioChannels=2&SegmentContainer=ts&MinSegments=1&Static=false",
+               resolvedItemId, msId ?: @"", config.deviceId ?: @"",
+               (long)s.maxVideoBitrate, (long)s.maxAudioBitrate,
+               (long)[s widthForResolution], (long)[s heightForResolution]];
+    }
     if (!url.length && ![OETranscodeSettings sharedSettings].directPlay && isAudio) {
         // The universal endpoint is the audio endpoint guaranteed to honor a
         // transcode request; /Audio/.../stream can return the source file

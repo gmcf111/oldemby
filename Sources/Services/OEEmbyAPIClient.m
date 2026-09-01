@@ -28,6 +28,10 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
 // Emby may return transcoding URLs that contain raw file-name bytes.  iOS 6-9
 // NSURL rejects several of those characters, so retain only URI-safe bytes.
 // Existing %XX escapes are preserved to avoid double encoding server URLs.
+// Note '[' and ']' are intentionally escaped: iOS 6's CFURL parses strictly
+// per RFC 3986, where those bytes are only legal inside an IPv6 host - left
+// raw in a path or query they make URLWithString: return nil, which surfaced
+// to the user as "invalid playback URL".
 static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     if (urlString.length == 0) return urlString;
     NSData *bytes = [urlString dataUsingEncoding:NSUTF8StringEncoding];
@@ -43,7 +47,7 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         BOOL isURISafe = isAlphaNumeric || c == '-' || c == '.' || c == '_' || c == '~' ||
             c == '!' || c == '$' || c == '&' || c == '\'' || c == '(' || c == ')' ||
             c == '*' || c == '+' || c == ',' || c == ';' || c == '=' || c == ':' ||
-            c == '@' || c == '/' || c == '?' || c == '[' || c == ']' || isEscapedByte;
+            c == '@' || c == '/' || c == '?' || isEscapedByte;
         if (isURISafe) [out appendFormat:@"%c", c];
         else [out appendFormat:@"%%%02X", c];
     }
@@ -350,7 +354,33 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
             url = [url stringByAppendingFormat:@"%@api_key=%@", sep, OEEncodeQueryComponent(token)];
         }
-        if (completion) completion(OEEscapeIllegalURLCharacters(url), nil);
+        // Final gate: hand the player only URLs NSURL can actually parse.
+        // iOS 6's CFURL is stricter than modern NSURL; if the byte-level
+        // escape above still leaves something it rejects, fall back to the
+        // system's own escaping routine before giving up.  A bad URL used to
+        // surface as a generic "invalid playback URL" alert with no detail.
+        NSString *finalURL = OEEscapeIllegalURLCharacters(url);
+        NSURL *parsed = [NSURL URLWithString:finalURL];
+        if (!parsed || !parsed.scheme.length || !parsed.host.length) {
+            CFStringRef recovered = CFURLCreateStringByAddingPercentEscapes(NULL,
+                (__bridge CFStringRef)url, NULL,
+                CFSTR(" \t\r\n\"<>\\^`{}[]|"), kCFStringEncodingUTF8);
+            NSString *recoveredURL = recovered ? [(__bridge NSString *)recovered copy] : nil;
+            if (recovered) CFRelease(recovered);
+            if (recoveredURL.length) {
+                NSURL *recoveredParsed = [NSURL URLWithString:recoveredURL];
+                if (recoveredParsed && recoveredParsed.scheme.length && recoveredParsed.host.length) {
+                    finalURL = recoveredURL;
+                    parsed = recoveredParsed;
+                }
+            }
+        }
+        NSLog(@"[OldEmby] playback URL for %@: %@", itemId, finalURL);
+        if (!parsed || !parsed.scheme.length || !parsed.host.length) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"服务器返回的播放地址无法解析：%@", url]}]);
+            return;
+        }
+        if (completion) completion(finalURL, nil);
     }];
 }
 

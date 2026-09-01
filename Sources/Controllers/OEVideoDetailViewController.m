@@ -249,7 +249,12 @@ static const CGFloat kCastStripHeight = 132.0;
         if (error) { [self showPlaybackError:error.localizedDescription]; return; }
         NSString *streamURL = [result isKindOfClass:[NSString class]] ? result : nil;
         NSURL *url = [NSURL URLWithString:streamURL];
-        if (!url || !url.scheme.length || !url.host.length) { [self showPlaybackError:@"服务器返回了无效的播放地址"]; return; }
+        if (!url || !url.scheme.length || !url.host.length) {
+            [self showPlaybackError:streamURL.length
+                ? [NSString stringWithFormat:@"服务器返回了无效的播放地址：%@", streamURL]
+                : @"服务器返回了无效的播放地址"];
+            return;
+        }
         if (self.activePlayerController || self.dismissingPlayer) return;
         NSLog(@"[OldEmby] video stream URL: %@", streamURL);
         [self presentPlayerForURL:url];
