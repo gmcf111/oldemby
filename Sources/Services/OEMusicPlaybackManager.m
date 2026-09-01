@@ -21,6 +21,7 @@
 @property (nonatomic, copy) NSString *statusText;
 @property (nonatomic, assign) NSUInteger generation;
 @property (nonatomic, assign) BOOL seeking;
+@property (nonatomic, assign) BOOL userWantsPlayback;
 @end
 
 @implementation OEMusicPlaybackManager
@@ -58,6 +59,7 @@
     self.playlist = playlist.count ? [playlist copy] : @[item];
     NSInteger index = [self.playlist indexOfObject:item];
     self.currentIndex = index == NSNotFound ? 0 : index;
+    self.userWantsPlayback = YES;
     [self loadCurrentItem];
 }
 
@@ -120,9 +122,16 @@
     self.timeObserver = [self.player addPeriodicTimeObserverForInterval:CMTimeMake(1, 2) queue:dispatch_get_main_queue() usingBlock:^(CMTime time) {
         [weakSelf updateProgress];
     }];
-    self.state = OEMusicPlaybackStateBuffering;
-    self.statusText = @"正在缓冲…";
-    [self.player play];
+    // Only start when playback was user-initiated; loading an item while
+    // paused (e.g. after pausing mid-load) must not auto-start the audio.
+    if (self.userWantsPlayback) {
+        self.state = OEMusicPlaybackStateBuffering;
+        self.statusText = @"正在缓冲…";
+        [self.player play];
+    } else {
+        self.state = OEMusicPlaybackStatePaused;
+        self.statusText = @"已暂停";
+    }
     [self updateNowPlayingInfo];
     [self publishState];
 }
@@ -132,16 +141,22 @@
     void (^applyState)(void) = ^{
         if ([keyPath isEqualToString:@"status"]) {
             if (self.playerItem.status == AVPlayerItemStatusReadyToPlay) {
-                self.state = OEMusicPlaybackStatePlaying;
-                self.statusText = @"正在播放";
-                [self.player play];
+                // Do not force playback when the user paused during buffering.
+                if (self.userWantsPlayback) {
+                    [self.player play];
+                    self.state = OEMusicPlaybackStatePlaying;
+                    self.statusText = @"正在播放";
+                } else if (self.state != OEMusicPlaybackStatePaused) {
+                    self.state = OEMusicPlaybackStatePaused;
+                    self.statusText = @"已暂停";
+                }
             } else if (self.playerItem.status == AVPlayerItemStatusFailed) {
                 self.state = OEMusicPlaybackStateFailed;
                 self.statusText = [NSString stringWithFormat:@"播放失败：%@", self.playerItem.error.localizedDescription ?: @"媒体不可播放"];
             }
             [self updateNowPlayingInfo];
             [self publishState];
-        } else if ([keyPath isEqualToString:@"playbackBufferEmpty"] && self.playerItem.playbackBufferEmpty) {
+        } else if ([keyPath isEqualToString:@"playbackBufferEmpty"] && self.playerItem.playbackBufferEmpty && self.userWantsPlayback) {
             self.state = OEMusicPlaybackStateBuffering;
             self.statusText = @"正在缓冲…";
             [self publishState];
@@ -193,8 +208,14 @@
 - (void)togglePlayPause { self.isPlaying ? [self pause] : [self resume]; }
 
 - (void)pause {
-    if (!self.player || self.state == OEMusicPlaybackStateFailed) return;
-    [self.player pause];
+    if (!self.currentItem) return;
+    // Clear the intent flag even while still loading/buffering, so a late
+    // stream URL or ready-to-play callback cannot restart the audio.
+    self.userWantsPlayback = NO;
+    if (self.state == OEMusicPlaybackStateFailed) return;
+    // The player does not exist yet while the stream URL is still loading;
+    // record the pause anyway so the UI and the eventual callbacks agree.
+    if (self.player) [self.player pause];
     self.state = OEMusicPlaybackStatePaused;
     self.statusText = @"已暂停";
     [self updateNowPlayingInfo];
@@ -204,9 +225,11 @@
 - (void)resume {
     if (!self.currentItem) return;
     if (!self.player || self.state == OEMusicPlaybackStateFailed) {
+        self.userWantsPlayback = YES;
         [self loadCurrentItem];
         return;
     }
+    self.userWantsPlayback = YES;
     [self.player play];
     self.state = OEMusicPlaybackStateBuffering;
     self.statusText = @"正在缓冲…";
@@ -269,10 +292,11 @@
     NSNumber *type = notification.userInfo[AVAudioSessionInterruptionTypeKey];
     if ([type unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan) {
         [self pause];
-    } else if ([type unsignedIntegerValue] == AVAudioSessionInterruptionTypeEnded) {
-        NSNumber *options = notification.userInfo[AVAudioSessionInterruptionOptionKey];
-        if ([options unsignedIntegerValue] == AVAudioSessionInterruptionOptionShouldResume) [self resume];
     }
+    // InterruptionEnded deliberately does not auto-resume: on iOS 6–9 the
+    // system posts it (often with ShouldResume) whenever the app is
+    // reactivated from the background, which made paused music start playing
+    // by itself. The user taps play instead.
 }
 
 - (void)receiveRemoteControlEvent:(UIEvent *)event {
