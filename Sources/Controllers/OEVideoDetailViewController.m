@@ -16,7 +16,7 @@ static const CGFloat kDetailCoverMaxWidth = 200.0;
 static const CGFloat kDetailCoverMinWidth = 120.0;
 static const CGFloat kDetailCoverMinHeight = 180.0;
 static const CGFloat kDetailCoverMaxHeight = 300.0;
-static const CGFloat kCastStripHeight = 110.0;
+static const CGFloat kCastStripHeight = 132.0;
 
 @interface OEVideoDetailViewController ()
 @property (nonatomic, strong) OEEmbyItem *item;
@@ -90,7 +90,7 @@ static const CGFloat kCastStripHeight = 110.0;
 
     // Overview label (right side)
     self.overviewLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    self.overviewLabel.font = [UIFont systemFontOfSize:12];
+    self.overviewLabel.font = [UIFont systemFontOfSize:15];
     self.overviewLabel.numberOfLines = 0;
     self.overviewLabel.text = self.item.overview ?: @"暂无简介";
     self.overviewLabel.backgroundColor = [UIColor clearColor];

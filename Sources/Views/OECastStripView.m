@@ -6,9 +6,11 @@
 #import "OETheme.h"
 
 // Layout constants
-static const CGFloat kCastPhotoSize = 72.0;
-static const CGFloat kCastCellWidth = 84.0;
+static const CGFloat kCastPhotoSize = 84.0;
+static const CGFloat kCastCellWidth = 100.0;
 static const CGFloat kCastPadding = 8.0;
+static const CGFloat kCastNameGap = 6.0;
+static const CGFloat kCastNameHeight = 36.0;
 
 @interface OECastStripView ()
 @property (nonatomic, strong) UIScrollView *scrollView;
@@ -86,8 +88,8 @@ static const CGFloat kCastPadding = 8.0;
         [_imageViews addObject:imgView];
 
         // Name label
-        UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(x, kCastPhotoSize + 4, kCastCellWidth, 34)];
-        nameLabel.font = [UIFont systemFontOfSize:11];
+        UILabel *nameLabel = [[UILabel alloc] initWithFrame:CGRectMake(x, kCastPhotoSize + kCastNameGap, kCastCellWidth, kCastNameHeight)];
+        nameLabel.font = [UIFont systemFontOfSize:12];
         nameLabel.textColor = [OETheme primaryTextColor];
         nameLabel.backgroundColor = [UIColor clearColor];
         nameLabel.numberOfLines = 2;

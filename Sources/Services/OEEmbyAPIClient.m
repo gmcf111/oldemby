@@ -25,6 +25,33 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
     return result;
 }
 
+// Emby builds playback URLs from file paths and item names, which on real
+// servers routinely contain spaces and non-ASCII (Chinese) characters.  iOS 6-9
+// [NSURL URLWithString:] returns nil for such a string, which surfaced as the
+// "服务器返回了无效的播放地址" error even though the URL was reachable.  This
+// percent-encodes only the bytes that are illegal in an already-formed URL
+// (space, control chars, and every non-ASCII byte) while leaving the URL
+// structure — scheme, host, path separators, query delimiters and any existing
+// %XX escapes — untouched, so we never double-encode a server-escaped value.
+// Printable ASCII (0x21-0x7E) is kept verbatim, which already preserves any
+// '%' and hex digits from a prior escape.
+static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
+    if (urlString.length == 0) return urlString;
+    NSData *bytes = [urlString dataUsingEncoding:NSUTF8StringEncoding];
+    if (!bytes) return urlString;
+    const unsigned char *raw = (const unsigned char *)bytes.bytes;
+    NSMutableString *out = [NSMutableString stringWithCapacity:urlString.length * 2];
+    for (NSUInteger i = 0; i < bytes.length; i++) {
+        unsigned char c = raw[i];
+        if (c >= 0x21 && c <= 0x7E) {
+            [out appendFormat:@"%c", c];
+        } else {
+            [out appendFormat:@"%%%02X", c];
+        }
+    }
+    return out;
+}
+
 @implementation OEEmbyAPIClient
 
 + (instancetype)sharedClient {
@@ -325,7 +352,7 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
             NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
             url = [url stringByAppendingFormat:@"%@api_key=%@", sep, OEEncodeQueryComponent(token)];
         }
-        if (completion) completion(url, nil);
+        if (completion) completion(OEEscapeIllegalURLCharacters(url), nil);
     }];
 }
 

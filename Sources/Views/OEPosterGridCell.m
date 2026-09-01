@@ -82,8 +82,8 @@ static const NSInteger kMaxColumns = 10;
 + (NSInteger)columnCountForViewSize:(CGSize)size {
     BOOL isPad = (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
     if (!isPad) return 3;
-    // iPad: landscape packs 10 per row so posters stay small, portrait 6.
-    return size.width > size.height ? 10 : 6;
+    // iPad: 5 columns portrait, 6 landscape — larger posters than before.
+    return size.width > size.height ? 6 : 5;
 }
 
 + (NSInteger)columnCountForTableWidth:(CGFloat)width {
@@ -94,23 +94,18 @@ static const NSInteger kMaxColumns = 10;
     if (win) {
         CGSize winSize = win.bounds.size;
         if (winSize.width > 0 && winSize.height > 0) {
-            if (winSize.width > winSize.height) return 10;
-            if (winSize.width < winSize.height) return 6;
+            if (winSize.width > winSize.height) return 6;
+            if (winSize.width < winSize.height) return 5;
         }
     }
     UIInterfaceOrientation orient = [[UIApplication sharedApplication] statusBarOrientation];
-    if (UIInterfaceOrientationIsLandscape(orient)) return 10;
-    if (UIInterfaceOrientationIsPortrait(orient)) return 6;
+    if (UIInterfaceOrientationIsLandscape(orient)) return 6;
+    if (UIInterfaceOrientationIsPortrait(orient)) return 5;
     // Unknown orientation: fall back to the screen size; iOS 6-7 screens are
     // always portrait, iOS 8+ rotate.
     CGSize screen = [UIScreen mainScreen].bounds.size;
-    if (screen.width > screen.height) return 10;
-    if (width >= 900) {
-        if (width > 1024) return 10;
-        if (width == 1024 && screen.height >= 1024) return 6;
-        return 10;
-    }
-    return 6;
+    if (screen.width > screen.height) return 6;
+    return 5;
 }
 
 + (NSInteger)columnCount {
@@ -119,15 +114,15 @@ static const NSInteger kMaxColumns = 10;
         UIWindow *win = [[UIApplication sharedApplication] keyWindow];
         if (win) {
             CGSize winSize = win.bounds.size;
-            if (winSize.width > winSize.height) return 10;
-            if (winSize.width < winSize.height) return 6;
+            if (winSize.width > winSize.height) return 6;
+            if (winSize.width < winSize.height) return 5;
         }
         UIInterfaceOrientation orient = [[UIApplication sharedApplication] statusBarOrientation];
-        if (UIInterfaceOrientationIsLandscape(orient)) return 10;
-        if (UIInterfaceOrientationIsPortrait(orient)) return 6;
+        if (UIInterfaceOrientationIsLandscape(orient)) return 6;
+        if (UIInterfaceOrientationIsPortrait(orient)) return 5;
         CGSize screen = [UIScreen mainScreen].bounds.size;
-        if (screen.width > screen.height) return 10;
-        return 6;
+        if (screen.width > screen.height) return 6;
+        return 5;
     }
     return 3;
 }
