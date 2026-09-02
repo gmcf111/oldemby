@@ -83,9 +83,12 @@
     self.progressSlider = [[UISlider alloc] initWithFrame:CGRectZero];
     self.progressSlider.minimumValue = 0.0;
     self.progressSlider.maximumValue = 1.0;
+    self.progressSlider.continuous = YES;
     [self.progressSlider addTarget:self action:@selector(sliderTouchDown) forControlEvents:UIControlEventTouchDown];
     [self.progressSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
-    [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit];
+    // Use a generous set of release events so the slider reliably commits
+    // the seek even when the finger drags outside the track on iOS 6.
+    [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit | UIControlEventTouchDragEnter];
     [self.view addSubview:self.progressSlider];
 
     self.timeLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -221,7 +224,11 @@
 - (void)refreshProgress {
     if (self.seeking) return;
     OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
+    // Suppress the ValueChanged event so setting the value programmatically
+    // does not re-trigger sliderChanged: and create a feedback loop.
+    self.progressSlider.userInteractionEnabled = NO;
     self.progressSlider.value = manager.progress;
+    self.progressSlider.userInteractionEnabled = YES;
     self.timeLabel.text = [NSString stringWithFormat:@"%@ / %@", [self stringForTime:manager.currentTime], [self stringForTime:manager.duration]];
     [self updateHighlightedLyricsAtTime:manager.currentTime scroll:YES];
 }
@@ -254,7 +261,9 @@
 - (void)playPauseTapped { [[OEMusicPlaybackManager sharedManager] togglePlayPause]; }
 - (void)previousTapped { [[OEMusicPlaybackManager sharedManager] previous]; }
 - (void)nextTapped { [[OEMusicPlaybackManager sharedManager] next]; }
-- (void)sliderTouchDown { self.seeking = YES; }
+- (void)sliderTouchDown {
+    self.seeking = YES;
+}
 - (void)sliderChanged:(UISlider *)slider {
     OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
     NSTimeInterval previewTime = slider.value * manager.duration;
@@ -265,6 +274,8 @@
     float progress = self.progressSlider.value;
     __weak typeof(self) weakSelf = self;
     [[OEMusicPlaybackManager sharedManager] seekToProgress:progress completion:^(BOOL finished) {
+        // The manager clears its own seeking flag after a delay; clear the
+        // VC flag here too so refreshProgress can resume updating.
         weakSelf.seeking = NO;
         [weakSelf refreshProgress];
     }];

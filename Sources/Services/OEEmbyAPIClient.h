@@ -42,6 +42,25 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 // Returns the MediaSources array from a PlaybackInfo response.
 - (void)fetchMediaSourcesForItem:(NSString *)itemId completion:(OEAPICompletion)completion;
 
+// Fetch external subtitle text (SRT) from the server.
+// mediaSourceId is the MediaSource Id from PlaybackInfo.
+// streamIndex is the subtitle stream's Index value.
+// format is the subtitle codec (e.g. "srt", "vtt", "ass").
+- (void)fetchSubtitleForItem:(NSString *)itemId
+              mediaSourceId:(NSString *)mediaSourceId
+                streamIndex:(NSInteger)streamIndex
+                     format:(NSString *)format
+                 completion:(OEAPICompletion)completion;
+
+// Build a transcode playback URL that forces a specific audio stream and/or
+// subtitles by embedding AudioStreamIndex / SubtitleStreamIndex into the HLS
+// master.m3u8 query. Returns nil if the base URL cannot be constructed.
+// baseStreamURL should be the URL returned by fetchStreamURLForItem:.
+- (NSString *)streamURLWithAudioIndex:(NSInteger)audioIndex
+                        subtitleIndex:(NSInteger)subtitleIndex
+                         fromBaseURL:(NSString *)baseStreamURL
+                                itemId:(NSString *)itemId;
+
 // Casts (actors / directors etc.)
 // Fetches the people list for the given item via /Items/{Id} with Fields=People.
 // Returns an array of OECastItem objects on success.

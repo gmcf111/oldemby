@@ -12,7 +12,7 @@
     // Older Emby releases do not populate IsTextSubtitleStream for audio.
     // In that case accept only known text codecs, never image subtitles.
     NSString *codec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : @"";
-    return [@[@"lrc", @"srt", @"subrip", @"vtt", @"webvtt", @"ass", @"ssa"] containsObject:codec];
+    return [@[@"lrc", @"srt", @"subrip", @"vtt", @"webvtt", @"ass", @"ssa", @"subviewer", @"microdvd", @"sub"] containsObject:codec];
 }
 
 + (NSString *)supportedLyricsFormatForStream:(NSDictionary *)stream {

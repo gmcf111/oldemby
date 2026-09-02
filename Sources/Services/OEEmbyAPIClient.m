@@ -560,7 +560,7 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     [[self authHeaders] enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
         [request setValue:value forHTTPHeaderField:key];
     }];
-    [request setValue:@"text/plain, text/srt, text/vtt, application/octet-stream" forHTTPHeaderField:@"Accept"];
+    [request setValue:@"text/plain, text/srt, text/vtt, text/ass, text/x-ssa, application/octet-stream" forHTTPHeaderField:@"Accept"];
     [NSURLConnection sendAsynchronousRequest:request queue:[NSOperationQueue mainQueue] completionHandler:^(NSURLResponse *response, NSData *data, NSError *error) {
         if (error) { if (completion) completion(nil, error); return; }
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
@@ -595,7 +595,7 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             NSInteger index = [stream[@"Index"] respondsToSelector:@selector(integerValue)] ? [stream[@"Index"] integerValue] : NSNotFound;
             NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
             NSString *codec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : @"";
-            BOOL knownTextCodec = [@[@"lrc", @"srt", @"subrip", @"vtt", @"webvtt", @"ass", @"ssa"] containsObject:codec];
+            BOOL knownTextCodec = [@[@"lrc", @"srt", @"subrip", @"vtt", @"webvtt", @"ass", @"ssa", @"subviewer", @"microdvd", @"sub"] containsObject:codec];
             if (index == item.embeddedLyricsStreamIndex && [type isEqualToString:@"Subtitle"] && ([stream[@"IsTextSubtitleStream"] boolValue] || knownTextCodec)) return source;
         }
     }
@@ -705,6 +705,83 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         }
         if (completion) completion(sources, nil);
     }];
+}
+
+#pragma mark - Subtitles
+
+- (void)fetchSubtitleForItem:(NSString *)itemId
+              mediaSourceId:(NSString *)mediaSourceId
+                streamIndex:(NSInteger)streamIndex
+                     format:(NSString *)format
+                 completion:(OEAPICompletion)completion {
+    if (!itemId.length || !mediaSourceId.length) {
+        if (completion) completion(@"", [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Missing item or media source ID for subtitle fetch"}]);
+        return;
+    }
+    // Default to SRT format — Emby's subtitle stream endpoint transcodes
+    // compatible text tracks (ASS, VTT, etc.) to SRT on the fly.
+    NSString *fmt = format.length ? format : @"srt";
+    NSString *path = [NSString stringWithFormat:@"/Items/%@/%@/Subtitles/%ld/Stream.%@",
+                      OEEncodeQueryComponent(itemId),
+                      OEEncodeQueryComponent(mediaSourceId),
+                      (long)streamIndex,
+                      OEEncodeQueryComponent(fmt)];
+    [self GETText:path completion:completion];
+}
+
+#pragma mark - Stream URL with Audio/Subtitle Index
+
+- (NSString *)streamURLWithAudioIndex:(NSInteger)audioIndex
+                        subtitleIndex:(NSInteger)subtitleIndex
+                         fromBaseURL:(NSString *)baseStreamURL
+                                itemId:(NSString *)itemId {
+    if (!baseStreamURL.length) return nil;
+
+    NSMutableString *url = [baseStreamURL mutableCopy];
+    if (audioIndex >= 0) {
+        // Remove any existing AudioStreamIndex parameter to avoid duplicates.
+        url = [self removeQueryParam:url key:@"AudioStreamIndex"];
+        NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
+        [url appendFormat:@"%@AudioStreamIndex=%ld", sep, (long)audioIndex];
+    }
+    if (subtitleIndex >= 0) {
+        url = [self removeQueryParam:url key:@"SubtitleStreamIndex"];
+        NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
+        [url appendFormat:@"%@SubtitleStreamIndex=%ld", sep, (long)subtitleIndex];
+        // Also set SubtitleMethod=Encode so the server burns-in image subs;
+        // for text subs the server will deliver them as part of the HLS if
+        // the profile requests it, or as an external endpoint we fetch.
+        url = [self removeQueryParam:url key:@"SubtitleMethod"];
+        sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
+        [url appendFormat:@"%@SubtitleMethod=Encode", sep];
+    }
+    return OEEscapeIllegalURLCharacters(url);
+}
+
+- (NSMutableString *)removeQueryParam:(NSMutableString *)url key:(NSString *)key {
+    // Remove existing key=value& from the query string to avoid duplicates.
+    NSString *pattern = [NSString stringWithFormat:@"%@=", key];
+    NSRange searchRange = NSMakeRange(0, url.length);
+    NSRange found = [url rangeOfString:pattern options:NSCaseInsensitiveSearch range:searchRange];
+    if (found.location == NSNotFound) return url;
+    // Find the end of this param value (next & or end of string).
+    NSUInteger valueStart = NSMaxRange(found);
+    NSUInteger end = valueStart;
+    while (end < url.length) {
+        unichar c = [url characterAtIndex:end];
+        if (c == '&') break;
+        end++;
+    }
+    // Also consume the preceding & if the param is not the first query key.
+    NSUInteger removeStart = found.location;
+    if (removeStart > 0 && [url characterAtIndex:removeStart - 1] == '&') {
+        removeStart--;
+    } else if (end < url.length && [url characterAtIndex:end] == '&') {
+        // Consume trailing &
+        end++;
+    }
+    [url deleteCharactersInRange:NSMakeRange(removeStart, end - removeStart)];
+    return url;
 }
 
 #pragma mark - Casts

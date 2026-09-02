@@ -2,25 +2,31 @@
 #import "Models/OEEmbyItem.h"
 #import "Models/OECastItem.h"
 #import "Models/OETranscodeSettings.h"
+#import "Models/OESRTSubtitleParser.h"
 #import "Services/OEEmbyAPIClient.h"
 #import "Services/OEImageCache.h"
 #import "Views/OETheme.h"
 #import "Views/OECastStripView.h"
 #import "Views/OEErrorAlertView.h"
 #import "Views/OEMediaInfoView.h"
+#import "Views/OESubtitleOverlayView.h"
+#import "Views/OEStreamSelectionView.h"
 #import "Constants.h"
 #import <MediaPlayer/MediaPlayer.h>
 
-// Layout constants
 static const CGFloat kDetailSidePadding = 12.0;
-static const CGFloat kDetailCoverWidthFraction = 0.42;  // cover occupies ~42% of screen width
+static const CGFloat kDetailCoverWidthFraction = 0.42;
 static const CGFloat kDetailCoverMaxWidth = 200.0;
 static const CGFloat kDetailCoverMinWidth = 120.0;
 static const CGFloat kDetailCoverMinHeight = 180.0;
 static const CGFloat kDetailCoverMaxHeight = 300.0;
 static const CGFloat kCastStripHeight = 132.0;
+static const CGFloat kOverlayButtonSize = 40.0;
+static const CGFloat kOverlayButtonSpacing = 12.0;
+static const CGFloat kOverlayBottomMargin = 8.0;
+static const CGFloat kOverlayAutoHideDelay = 5.0;
 
-@interface OEVideoDetailViewController ()
+@interface OEVideoDetailViewController () <OEStreamSelectionDelegate>
 @property (nonatomic, strong) OEEmbyItem *item;
 @property (nonatomic, strong) UIImageView *cover;
 @property (nonatomic, strong) UILabel *titleLabel;
@@ -42,10 +48,23 @@ static const CGFloat kCastStripHeight = 132.0;
 @property (nonatomic, assign) NSUInteger playRequestGeneration;
 @property (nonatomic, assign) NSInteger pendingFinishReason;
 @property (nonatomic, strong) NSError *pendingPlaybackError;
-// Kept for diagnostics: shown (and copyable) in the failure sheet.
 @property (nonatomic, copy) NSString *activeStreamURLString;
-// Tracks whether the current playback attempt is direct stream (no transcode).
 @property (nonatomic, assign) BOOL currentPlaybackIsDirect;
+@property (nonatomic, strong) NSArray *audioStreams;
+@property (nonatomic, strong) NSArray *subtitleStreams;
+@property (nonatomic, strong) NSString *activeMediaSourceId;
+@property (nonatomic, assign) NSInteger selectedAudioIndex;
+@property (nonatomic, assign) NSInteger selectedSubtitleIndex;
+@property (nonatomic, strong) OESubtitleOverlayView *subtitleOverlay;
+@property (nonatomic, strong) NSTimer *subtitleTimer;
+@property (nonatomic, strong) NSArray *parsedSubtitleCues;
+@property (nonatomic, assign) BOOL subtitleLoading;
+@property (nonatomic, strong) UIButton *audioButton;
+@property (nonatomic, strong) UIButton *subtitleButton;
+@property (nonatomic, strong) UIView *overlayControlsView;
+@property (nonatomic, assign) BOOL overlayControlsVisible;
+@property (nonatomic, strong) NSTimer *overlayHideTimer;
+@property (nonatomic, strong) OEStreamSelectionView *streamSelectionView;
 @end
 
 @implementation OEVideoDetailViewController
@@ -65,8 +84,9 @@ static const CGFloat kCastStripHeight = 132.0;
     [super viewDidLoad];
     [OETheme prepareViewController:self];
     self.title = self.item.name;
+    self.selectedAudioIndex = -1;
+    self.selectedSubtitleIndex = -1;
 
-    // ScrollView to hold all content (cover+overview+casts+play button)
     _scrollView = [[UIScrollView alloc] initWithFrame:self.view.bounds];
     _scrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _scrollView.showsVerticalScrollIndicator = YES;
@@ -75,14 +95,12 @@ static const CGFloat kCastStripHeight = 132.0;
     _contentView = [[UIView alloc] initWithFrame:CGRectZero];
     [_scrollView addSubview:_contentView];
 
-    // Cover image (left side)
     self.cover = [[UIImageView alloc] initWithFrame:CGRectZero];
     self.cover.contentMode = UIViewContentModeScaleAspectFill;
     self.cover.clipsToBounds = YES;
     self.cover.layer.borderWidth = 1.0;
     [self.contentView addSubview:self.cover];
 
-    // Title label (right side, above overview)
     self.titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     self.titleLabel.text = self.item.name;
@@ -90,14 +108,12 @@ static const CGFloat kCastStripHeight = 132.0;
     self.titleLabel.numberOfLines = 2;
     [self.contentView addSubview:self.titleLabel];
 
-    // Overview header
     self.overviewHeaderLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.overviewHeaderLabel.font = [UIFont boldSystemFontOfSize:13];
     self.overviewHeaderLabel.text = @"简介";
     self.overviewHeaderLabel.backgroundColor = [UIColor clearColor];
     [self.contentView addSubview:self.overviewHeaderLabel];
 
-    // Overview label (right side)
     self.overviewLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.overviewLabel.font = [UIFont systemFontOfSize:15];
     self.overviewLabel.numberOfLines = 0;
@@ -105,30 +121,25 @@ static const CGFloat kCastStripHeight = 132.0;
     self.overviewLabel.backgroundColor = [UIColor clearColor];
     [self.contentView addSubview:self.overviewLabel];
 
-    // Cast header label
     self.castHeaderLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.castHeaderLabel.font = [UIFont boldSystemFontOfSize:14];
     self.castHeaderLabel.text = @"演职人员";
     self.castHeaderLabel.backgroundColor = [UIColor clearColor];
     [self.contentView addSubview:self.castHeaderLabel];
 
-    // Cast strip view
     self.castStrip = [[OECastStripView alloc] initWithFrame:CGRectZero];
     self.castStrip.casts = @[];
     [self.contentView addSubview:self.castStrip];
 
-    // Media info header
     self.mediaInfoHeaderLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.mediaInfoHeaderLabel.font = [UIFont boldSystemFontOfSize:14];
     self.mediaInfoHeaderLabel.text = @"媒体信息";
     self.mediaInfoHeaderLabel.backgroundColor = [UIColor clearColor];
     [self.contentView addSubview:self.mediaInfoHeaderLabel];
 
-    // Media info view (video/audio stream details)
     self.mediaInfoView = [[OEMediaInfoView alloc] initWithFrame:CGRectZero];
     [self.contentView addSubview:self.mediaInfoView];
 
-    // Status label
     self.statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.statusLabel.font = [UIFont systemFontOfSize:12];
     self.statusLabel.textAlignment = NSTextAlignmentCenter;
@@ -136,7 +147,6 @@ static const CGFloat kCastStripHeight = 132.0;
     self.statusLabel.backgroundColor = [UIColor clearColor];
     [self.contentView addSubview:self.statusLabel];
 
-    // Play button
     self.playBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     self.playBtn.backgroundColor = [OETheme accentColor];
     self.playBtn.layer.cornerRadius = 7;
@@ -146,10 +156,6 @@ static const CGFloat kCastStripHeight = 132.0;
     [self.playBtn addTarget:self action:@selector(playTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:self.playBtn];
 
-    // Direct play button — requests the original file with no transcoding.
-    // Useful for content already in a device-decodable format (older TV
-    // recordings, MPEG-2 / H.264 mp4) where HLS transcode may fail or add
-    // unnecessary overhead.
     self.directPlayBtn = [UIButton buttonWithType:UIButtonTypeCustom];
     self.directPlayBtn.backgroundColor = [UIColor clearColor];
     self.directPlayBtn.layer.cornerRadius = 7;
@@ -161,14 +167,10 @@ static const CGFloat kCastStripHeight = 132.0;
 
     [self applyTheme];
 
-    // Load cover image — larger resolution since cover is bigger now
     NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:self.item width:400 height:600];
     [[OEImageCache sharedCache] loadImageFromURL:url placeholder:nil completion:^(UIImage *image) { self.cover.image = image; }];
 
-    // Fetch cast list
     [self loadCasts];
-
-    // Fetch media stream info (video/audio codec, resolution, channels, etc.)
     [self loadMediaInfo];
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyTheme) name:kNotificationThemeDidChange object:nil];
@@ -178,18 +180,12 @@ static const CGFloat kCastStripHeight = 132.0;
     NSString *castItemId = self.item.seriesId.length ? self.item.seriesId : self.item.itemId;
     NSString *fallbackItemId = self.item.seriesId.length ? self.item.itemId : nil;
     [[OEEmbyAPIClient sharedClient] fetchCastsForItem:castItemId completion:^(id result, NSError *error) {
-        if (error) {
-            // Silently ignore cast errors - not critical for playback
-            return;
-        }
+        if (error) return;
         if ([result isKindOfClass:[NSArray class]] && ((NSArray *)result).count > 0) {
             self.castStrip.casts = result;
             [self.view setNeedsLayout];
             return;
         }
-        // First attempt returned no people: if we queried by seriesId, retry
-        // with the item's own Id — some Emby versions only attach People to
-        // the episode/movie item, not to the series root.
         if (fallbackItemId.length) {
             [[OEEmbyAPIClient sharedClient] fetchCastsForItem:fallbackItemId completion:^(id r2, NSError *e2) {
                 if (e2) return;
@@ -208,9 +204,100 @@ static const CGFloat kCastStripHeight = 132.0;
     [[OEEmbyAPIClient sharedClient] fetchMediaSourcesForItem:itemId completion:^(id result, NSError *error) {
         if (error || ![result isKindOfClass:[NSArray class]]) return;
         self.mediaInfoView.mediaSources = result;
+        [self parseStreamInfoFromMediaSources:result];
         [self.view setNeedsLayout];
     }];
 }
+
+#pragma mark - Stream Parsing
+
+- (void)parseStreamInfoFromMediaSources:(NSArray *)mediaSources {
+    NSMutableArray *audio = [NSMutableArray array];
+    NSMutableArray *subs = [NSMutableArray array];
+    NSString *firstMediaSourceId = nil;
+    for (NSDictionary *source in mediaSources) {
+        if (![source isKindOfClass:[NSDictionary class]]) continue;
+        if (!firstMediaSourceId.length) {
+            NSString *sid = [source[@"Id"] isKindOfClass:[NSString class]] ? source[@"Id"] : nil;
+            if (sid.length) firstMediaSourceId = sid;
+        }
+        NSArray *streams = source[@"MediaStreams"];
+        if (![streams isKindOfClass:[NSArray class]]) continue;
+        for (NSDictionary *stream in streams) {
+            if (![stream isKindOfClass:[NSDictionary class]]) continue;
+            NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
+            if ([type isEqualToString:@"Audio"]) {
+                [audio addObject:[self streamInfoFromDictionary:stream]];
+            } else if ([type isEqualToString:@"Subtitle"]) {
+                OEStreamInfo *info = [self streamInfoFromDictionary:stream];
+                BOOL isText = [stream[@"IsTextSubtitleStream"] boolValue];
+                NSString *codec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : @"";
+                // Expand the list to include all text subtitle formats our
+                // parser can handle. "sub" alone is ambiguous (can be image-
+                // based SubViewer or text MicroDVD), so only include "subrip"
+                // and "subviewer" which are text-based.
+                BOOL knownTextCodec = [codec containsString:@"srt"] ||
+                                      [codec containsString:@"vtt"] ||
+                                      [codec containsString:@"ass"] ||
+                                      [codec containsString:@"ssa"] ||
+                                      [codec containsString:@"subrip"] ||
+                                      [codec containsString:@"subviewer"] ||
+                                      [codec containsString:@"webvtt"] ||
+                                      [codec containsString:@"lrc"] ||
+                                      [codec containsString:@"microdvd"] ||
+                                      [codec isEqualToString:@"sub"];
+                if (!isText && !knownTextCodec) continue;
+                info.mediaSourceId = firstMediaSourceId;
+                [subs addObject:info];
+            }
+        }
+    }
+    self.audioStreams = audio;
+    self.subtitleStreams = subs;
+    self.activeMediaSourceId = firstMediaSourceId;
+    for (NSInteger i = 0; i < (NSInteger)audio.count; i++) {
+        if (((OEStreamInfo *)audio[i]).isDefault) { self.selectedAudioIndex = i; break; }
+    }
+    self.selectedSubtitleIndex = -1;
+}
+
+- (OEStreamInfo *)streamInfoFromDictionary:(NSDictionary *)stream {
+    OEStreamInfo *info = [[OEStreamInfo alloc] init];
+    id rawIndex = stream[@"Index"];
+    if ([rawIndex isKindOfClass:[NSNumber class]]) info.index = [NSString stringWithFormat:@"%ld", (long)[rawIndex integerValue]];
+    else if ([rawIndex isKindOfClass:[NSString class]]) info.index = rawIndex;
+    NSString *title = [stream[@"DisplayTitle"] isKindOfClass:[NSString class]] ? stream[@"DisplayTitle"] : nil;
+    NSString *codec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : @"";
+    NSString *lang = [stream[@"Language"] isKindOfClass:[NSString class]] ? stream[@"Language"] : @"";
+    info.language = lang; info.codec = codec;
+    info.isDefault = [stream[@"IsDefault"] boolValue];
+    info.isExternal = [stream[@"IsExternal"] boolValue];
+    id deliveryUrl = stream[@"DeliveryUrl"];
+    if ([deliveryUrl isKindOfClass:[NSString class]]) info.deliveryUrl = deliveryUrl;
+    NSMutableString *dt = [NSMutableString string];
+    if (lang.length) [dt appendFormat:@"%@ ", [self languageDisplay:lang]];
+    if (codec.length) [dt appendFormat:@"%@ ", codec.uppercaseString];
+    if (info.isDefault) [dt appendString:@"(默认)"];
+    while ([dt hasSuffix:@" "]) [dt deleteCharactersInRange:NSMakeRange(dt.length - 1, 1)];
+    if (dt.length == 0 && title.length) dt = [title mutableCopy];
+    info.title = dt.length ? [dt copy] : (title ?: @"未知");
+    return info;
+}
+
+- (NSString *)languageDisplay:(NSString *)code {
+    if (!code.length) return @"未知";
+    NSDictionary *map = @{
+        @"jpn": @"日语", @"ja": @"日语", @"chi": @"中文", @"zh": @"中文", @"zho": @"中文",
+        @"eng": @"英语", @"en": @"英语", @"kor": @"韩语", @"ko": @"韩语",
+        @"fra": @"法语", @"fr": @"法语", @"ger": @"德语", @"de": @"德语", @"deu": @"德语",
+        @"spa": @"西班牙语", @"es": @"西班牙语", @"ita": @"意大利语", @"it": @"意大利语",
+        @"tha": @"泰语", @"th": @"泰语", @"rus": @"俄语", @"ru": @"俄语",
+        @"por": @"葡萄牙语", @"pt": @"葡萄牙语",
+    };
+    return map[[code lowercaseString]] ?: code;
+}
+
+#pragma mark - Theme
 
 - (void)applyTheme {
     self.view.backgroundColor = [OETheme libraryBackgroundColor];
@@ -230,64 +317,41 @@ static const CGFloat kCastStripHeight = 132.0;
     if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
 }
 
+#pragma mark - Layout
+
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-
     CGFloat w = self.view.bounds.size.width;
     CGFloat margin = kDetailSidePadding;
-
-    // Calculate cover dimensions: ~42% of screen width, clamped
     CGFloat coverWidth = w * kDetailCoverWidthFraction;
     coverWidth = MAX(kDetailCoverMinWidth, MIN(coverWidth, kDetailCoverMaxWidth));
-    // Cover aspect ratio: use 2:3 for movie posters, or item's aspect ratio
     CGFloat aspectRatio = self.item.primaryImageAspectRatio > 0 ? self.item.primaryImageAspectRatio : (2.0 / 3.0);
-    // For posters, aspect < 1 means portrait; use it to calculate height
     CGFloat coverHeight = coverWidth / (aspectRatio > 0 ? aspectRatio : (2.0 / 3.0));
     coverHeight = MAX(kDetailCoverMinHeight, MIN(coverHeight, kDetailCoverMaxHeight));
-
-    // Top section: cover on left, title+overview on right
     CGFloat topY = margin;
     self.cover.frame = CGRectMake(margin, topY, coverWidth, coverHeight);
-
     CGFloat rightX = margin + coverWidth + margin;
     CGFloat rightWidth = w - rightX - margin;
-
-    // Title at top of right column
     CGFloat titleHeight = 38;
     self.titleLabel.frame = CGRectMake(rightX, topY, rightWidth, titleHeight);
-
-    // Overview header
     CGFloat ovHdrY = CGRectGetMaxY(self.titleLabel.frame) + 6;
     self.overviewHeaderLabel.frame = CGRectMake(rightX, ovHdrY, rightWidth, 18);
-
-    // Overview label: fill remaining right column space below cover top area
     CGFloat ovY = CGRectGetMaxY(self.overviewHeaderLabel.frame) + 4;
     CGFloat ovHeight = coverHeight - (titleHeight + 6 + 18 + 4);
-    // Calculate actual needed height using iOS 6 compatible API
     CGSize textSize = [self.overviewLabel.text sizeWithFont:self.overviewLabel.font
                                            constrainedToSize:CGSizeMake(rightWidth, CGFLOAT_MAX)
                                                lineBreakMode:NSLineBreakByWordWrapping];
-    CGFloat neededHeight = ceil(textSize.height);
-    // The overview should at least fill the remaining cover area, but can be taller
-    ovHeight = MAX(neededHeight, ovHeight);
+    ovHeight = MAX(ceil(textSize.height), ovHeight);
     self.overviewLabel.frame = CGRectMake(rightX, ovY, rightWidth, ovHeight);
-
-    // After cover+overview section, the Y is the max of cover bottom and overview bottom
     CGFloat afterTopY = MAX(CGRectGetMaxY(self.cover.frame), CGRectGetMaxY(self.overviewLabel.frame)) + 16;
-
-    // Cast section
     self.castHeaderLabel.frame = CGRectMake(margin, afterTopY, w - 2 * margin, 20);
     CGFloat castY = CGRectGetMaxY(self.castHeaderLabel.frame) + 6;
     self.castStrip.frame = CGRectMake(margin, castY, w - 2 * margin, kCastStripHeight);
-
-    // Media info section
     CGFloat mediaInfoY = CGRectGetMaxY(self.castStrip.frame) + 16;
     self.mediaInfoHeaderLabel.frame = CGRectMake(margin, mediaInfoY, w - 2 * margin, 20);
-    CGFloat mediaInfoViewY = CGRectGetMaxY(self.mediaInfoHeaderLabel.frame) + 6;
-    CGFloat mediaInfoHeight = [self.mediaInfoView heightForWidth:w - 2 * margin];
-    self.mediaInfoView.frame = CGRectMake(margin, mediaInfoViewY, w - 2 * margin, mediaInfoHeight);
-
-    // Play button + status + direct play button
+    CGFloat miY = CGRectGetMaxY(self.mediaInfoHeaderLabel.frame) + 6;
+    CGFloat miH = [self.mediaInfoView heightForWidth:w - 2 * margin];
+    self.mediaInfoView.frame = CGRectMake(margin, miY, w - 2 * margin, miH);
     CGFloat playY = CGRectGetMaxY(self.mediaInfoView.frame) + 16;
     self.statusLabel.frame = CGRectMake(margin, playY, w - 2 * margin, 18);
     playY += 22;
@@ -295,8 +359,6 @@ static const CGFloat kCastStripHeight = 132.0;
     playY += 46 + 8;
     self.directPlayBtn.frame = CGRectMake(margin, playY, w - 2 * margin, 40);
     playY += 40 + margin;
-
-    // Set content size for scrolling
     self.scrollView.frame = self.view.bounds;
     self.contentView.frame = CGRectMake(0, 0, w, playY);
     self.scrollView.contentSize = CGSizeMake(w, playY);
@@ -307,6 +369,8 @@ static const CGFloat kCastStripHeight = 132.0;
     if (!self.activePlayerController) [self.playBtn setTitle:[self playButtonTitle] forState:UIControlStateNormal];
     if (!self.activePlayerController) self.directPlayBtn.enabled = YES;
 }
+
+#pragma mark - Playback
 
 - (void)playTapped {
     [self beginStreamFetch:^(OEEmbyAPIClient *client, NSString *itemId, OEAPICompletion cb) {
@@ -345,9 +409,6 @@ static const CGFloat kCastStripHeight = 132.0;
         }
         NSString *streamURL = [result isKindOfClass:[NSString class]] ? result : nil;
         NSURL *url = [NSURL URLWithString:streamURL];
-        // The API client already validated and repaired the URL. Requiring a
-        // non-empty scheme/host here as well used to reject playable streams,
-        // so only bail out when NSURL produced nothing at all.
         if (!url) {
             [self showPlaybackError:@"服务器返回了无效的播放地址"
                              detail:streamURL.length ? [NSString stringWithFormat:@"地址：%@", streamURL] : @"服务器未返回任何地址"];
@@ -357,7 +418,7 @@ static const CGFloat kCastStripHeight = 132.0;
         NSLog(@"[OldEmby] video stream URL: %@", streamURL);
         BOOL isDirect = [streamURL rangeOfString:@"Static=true" options:NSCaseInsensitiveSearch].location != NSNotFound;
         self.currentPlaybackIsDirect = isDirect;
-        [self presentPlayerForURL:url isDirectStream:isDirect];
+        [self presentPlayerForURL:url isDirectStream:isDirect baseURLString:streamURL];
     };
     fetchBlock(client, itemId, handler);
 }
@@ -371,19 +432,16 @@ static const CGFloat kCastStripHeight = 132.0;
 }
 
 - (void)presentPlayerForURL:(NSURL *)url {
-    [self presentPlayerForURL:url isDirectStream:NO];
+    [self presentPlayerForURL:url isDirectStream:NO baseURLString:nil];
 }
 
 - (void)presentPlayerForURL:(NSURL *)url isDirectStream:(BOOL)isDirectStream {
+    [self presentPlayerForURL:url isDirectStream:isDirectStream baseURLString:nil];
+}
+
+- (void)presentPlayerForURL:(NSURL *)url isDirectStream:(BOOL)isDirectStream baseURLString:(NSString *)baseURLString {
     if (!url || self.activePlayerController || self.dismissingPlayer) return;
-    self.activeStreamURLString = url.absoluteString;
-    // Guard the entire setup/present path.  On iOS 6,
-    // MPMoviePlayerController can throw an NSInvalidArgumentException
-    // from internal delayed-perform callbacks when the source type or
-    // URL is not directly playable (e.g. a direct-stream HTTP URL whose
-    // underlying codec is H.265/HEVC despite an mp4 container).  Without
-    // this guard the exception propagates through __NSFireDelayedPerform
-    // and aborts the process.
+    self.activeStreamURLString = baseURLString ?: url.absoluteString;
     @try {
         MPMoviePlayerViewController *controller = [[MPMoviePlayerViewController alloc] initWithContentURL:url];
         if (!controller || !controller.moviePlayer) {
@@ -393,36 +451,21 @@ static const CGFloat kCastStripHeight = 132.0;
         self.activePlayerController = controller;
         self.playerBecamePlayable = NO;
         self.dismissingPlayer = NO;
-        // Direct stream URLs (Static=true, no HLS) play better as File sources:
-        // MPMovieSourceTypeStreaming forces HLS-style buffering heuristics
-        // that stall progressive HTTP downloads on iOS 6.
         controller.moviePlayer.movieSourceType = isDirectStream ? MPMovieSourceTypeFile : MPMovieSourceTypeStreaming;
-        // Do NOT set shouldAutoplay = YES.  On iOS 6, shouldAutoplay
-        // triggers an internal performSelector:afterDelay: auto-play
-        // path in MPMoviePlayerController.  If the stream is not
-        // directly decodable (unsupported codec, malformed HLS), that
-        // delayed callback throws an NSInvalidArgumentException that
-        // @try/@catch cannot intercept (it fires in a separate RunLoop
-        // tick).  Instead, we call [player play] explicitly from
-        // movieLoadStateChanged: when the load state reaches
-        // MPMovieLoadStatePlayable, which is the safe, synchronous path.
         controller.moviePlayer.shouldAutoplay = NO;
+        controller.moviePlayer.controlStyle = MPMovieControlStyleFullscreen;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieLoadStateChanged:) name:MPMoviePlayerLoadStateDidChangeNotification object:controller.moviePlayer];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(moviePlaybackStateChanged:) name:MPMoviePlayerPlaybackStateDidChangeNotification object:controller.moviePlayer];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieFinished:) name:MPMoviePlayerPlaybackDidFinishNotification object:controller.moviePlayer];
         self.statusLabel.text = @"正在缓冲视频…";
-        // Present the controller BEFORE calling prepareToPlay.  On iOS 6,
-        // MPMoviePlayerController needs its view hierarchy attached to a
-        // window to initialise the CoreMedia pipeline; calling
-        // prepareToPlay first can leave internal state observers dangling
-        // and trigger a delayed-perform crash when the presentation
-        // animation finally starts.
         [self presentMoviePlayerViewControllerAnimated:controller];
         @try {
             [controller.moviePlayer prepareToPlay];
         } @catch (NSException *inner) {
             NSLog(@"[OldEmby] prepareToPlay exception: %@", inner);
         }
+        [self setupOverlayControls];
+        [self startSubtitlePlayback];
     } @catch (NSException *e) {
         NSLog(@"[OldEmby] presentPlayerForURL exception: %@", e);
         @try { [self.activePlayerController.moviePlayer stop]; } @catch (NSException *stopEx) {
@@ -442,9 +485,6 @@ static const CGFloat kCastStripHeight = 132.0;
     if (player.loadState & MPMovieLoadStatePlayable) {
         self.playerBecamePlayable = YES;
         self.statusLabel.text = @"视频已就绪";
-        // Guard the explicit play call: on iOS 6 the system player can
-        // throw from this synchronous entry point when the underlying
-        // asset is not decodable.
         @try { [player play]; } @catch (NSException *playEx) {
             NSLog(@"[OldEmby] player play exception: %@", playEx);
         }
@@ -479,6 +519,7 @@ static const CGFloat kCastStripHeight = 132.0;
 - (void)finishDismissingPlayer {
     MPMoviePlayerViewController *controller = self.activePlayerController;
     self.dismissingPlayer = NO;
+    [self cleanupOverlayAndSubtitles];
     if (self.pendingFinishReason == MPMovieFinishReasonPlaybackError) {
         NSString *msg = self.pendingPlaybackError.localizedDescription;
         if (!msg.length) msg = @"系统播放器无法播放该 HLS 流，请检查 Emby 转码日志与 HLS 版本设置";
@@ -488,9 +529,6 @@ static const CGFloat kCastStripHeight = 132.0;
     } else if (self.pendingFinishReason == MPMovieFinishReasonPlaybackEnded) {
         self.statusLabel.text = @"播放结束";
     } else if (!self.playerBecamePlayable) {
-        // The player gave up before reaching a playable state without an
-        // explicit error. Surface whatever the system attached (if anything)
-        // so the failure reason is visible instead of a generic status line.
         NSString *detail = self.pendingPlaybackError.localizedDescription;
         [self showPlaybackError:detail.length
             ? [NSString stringWithFormat:@"播放器未取得可播放数据：%@", detail]
@@ -500,23 +538,12 @@ static const CGFloat kCastStripHeight = 132.0;
         self.statusLabel.text = @"播放结束";
     }
     self.pendingPlaybackError = nil;
-    // Hold the controller for one more run-loop pass. iOS 6 finalizes
-    // MPMoviePlayerController's view/layer teardown on the next CA commit; if
-    // the strong property above was the last retain, releasing it now leaves
-    // that commit messaging a freed object -> EXC_BAD_ACCESS on the main run
-    // loop observer. Clearing the property on the next tick avoids that.
     if (controller) {
         __weak typeof(self) weakSelf = self;
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong typeof(weakSelf) strongSelf = weakSelf;
             if (!strongSelf) return;
-            // Stop the player once more before releasing: iOS 6 schedules
-            // internal teardown via performSelector:afterDelay:, and if the
-            // controller is released while those callbacks are still
-            // queued the delayed-perform dispatch lands on freed memory.
-            @try {
-                [strongSelf.activePlayerController.moviePlayer stop];
-            } @catch (NSException *e) {
+            @try { [strongSelf.activePlayerController.moviePlayer stop]; } @catch (NSException *e) {
                 NSLog(@"[OldEmby] deferred stop exception: %@", e);
             }
             strongSelf.activePlayerController = nil;
@@ -533,9 +560,6 @@ static const CGFloat kCastStripHeight = 132.0;
     self.pendingFinishReason = [notification.userInfo[MPMoviePlayerPlaybackDidFinishReasonUserInfoKey] integerValue];
     self.pendingPlaybackError = notification.userInfo[@"error"];
     [self removePlayerObserversForPlayer:player];
-    // Guard stop/dismiss in @try/@catch: MPMoviePlayerController on iOS 6
-    // can throw from its teardown delayed-perform when the stream was
-    // never playable (e.g. direct stream of an unsupported codec).
     @try { [player stop]; } @catch (NSException *stopEx) {
         NSLog(@"[OldEmby] player stop exception: %@", stopEx);
     }
@@ -543,8 +567,6 @@ static const CGFloat kCastStripHeight = 132.0;
         [self dismissMoviePlayerViewControllerAnimated];
     } @catch (NSException *dismissEx) {
         NSLog(@"[OldEmby] dismissMoviePlayer exception: %@", dismissEx);
-        // If the modal dismiss itself threw, finalise cleanup directly so
-        // the controller is not left in a half-dismissed state.
         self.dismissingPlayer = NO;
         self.activePlayerController = nil;
     }
@@ -554,8 +576,6 @@ static const CGFloat kCastStripHeight = 132.0;
     [self showPlaybackError:message detail:nil];
 }
 
-// detail carries the raw material worth pasting into a bug report (stream URL,
-// server body, NSError domain/code). It is shown in a selectable text view.
 - (void)showPlaybackError:(NSString *)message detail:(NSString *)detail {
     self.statusLabel.text = @"播放失败";
     NSMutableString *context = [NSMutableString string];
@@ -589,24 +609,363 @@ static const CGFloat kCastStripHeight = 132.0;
     self.fetchingStream = NO;
 }
 
+#pragma mark - Overlay Controls
+
+- (void)setupOverlayControls {
+    MPMoviePlayerController *player = self.activePlayerController.moviePlayer;
+    if (!player) return;
+    UIView *playerView = self.activePlayerController.view;
+    if (!playerView) return;
+
+    _overlayControlsView = [[UIView alloc] initWithFrame:CGRectZero];
+    _overlayControlsView.backgroundColor = [UIColor clearColor];
+    _overlayControlsView.userInteractionEnabled = YES;
+    [playerView addSubview:_overlayControlsView];
+
+    _audioButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _audioButton.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+    _audioButton.layer.cornerRadius = kOverlayButtonSize / 2;
+    _audioButton.titleLabel.font = [UIFont systemFontOfSize:11];
+    _audioButton.titleLabel.numberOfLines = 2;
+    _audioButton.titleLabel.textAlignment = NSTextAlignmentCenter;
+    [_audioButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [_audioButton setTitle:@"音轨" forState:UIControlStateNormal];
+    [_audioButton addTarget:self action:@selector(audioButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [_overlayControlsView addSubview:_audioButton];
+
+    _subtitleButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _subtitleButton.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+    _subtitleButton.layer.cornerRadius = kOverlayButtonSize / 2;
+    _subtitleButton.titleLabel.font = [UIFont systemFontOfSize:11];
+    _subtitleButton.titleLabel.numberOfLines = 2;
+    _subtitleButton.titleLabel.textAlignment = NSTextAlignmentCenter;
+    [_subtitleButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [_subtitleButton setTitle:@"字幕" forState:UIControlStateNormal];
+    [_subtitleButton addTarget:self action:@selector(subtitleButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+    [_overlayControlsView addSubview:_subtitleButton];
+
+    // Add subtitle overlay on top of the player view
+    _subtitleOverlay = [[OESubtitleOverlayView alloc] initWithFrame:CGRectZero];
+    [playerView addSubview:_subtitleOverlay];
+
+    // Add a tap gesture to toggle overlay controls visibility
+    UITapGestureRecognizer *tapGesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleOverlayControls)];
+    tapGesture.cancelsTouchesInView = NO;
+    [playerView addGestureRecognizer:tapGesture];
+
+    [self layoutOverlayControls];
+    [self showOverlayControls];
+}
+
+- (void)layoutOverlayControls {
+    UIView *playerView = self.activePlayerController.view;
+    if (!playerView) return;
+    CGFloat w = playerView.bounds.size.width;
+    CGFloat h = playerView.bounds.size.height;
+    if (w < 1 || h < 1) return;
+
+    CGFloat totalW = 2 * kOverlayButtonSize + kOverlayButtonSpacing;
+    CGFloat startX = (w - totalW) / 2.0;
+    CGFloat y = h - kOverlayButtonSize - kOverlayBottomMargin - 40; // above system controls
+    _overlayControlsView.frame = CGRectMake(startX, y, totalW, kOverlayButtonSize);
+    _audioButton.frame = CGRectMake(0, 0, kOverlayButtonSize, kOverlayButtonSize);
+    _subtitleButton.frame = CGRectMake(kOverlayButtonSize + kOverlayButtonSpacing, 0, kOverlayButtonSize, kOverlayButtonSize);
+    _subtitleOverlay.frame = CGRectMake(0, 0, w, h);
+}
+
+- (void)showOverlayControls {
+    _overlayControlsVisible = YES;
+    _overlayControlsView.alpha = 1.0;
+    [self resetOverlayHideTimer];
+}
+
+- (void)hideOverlayControls {
+    _overlayControlsVisible = NO;
+    [UIView beginAnimations:nil context:nil];
+    [UIView setAnimationDuration:0.3];
+    _overlayControlsView.alpha = 0.0;
+    [UIView commitAnimations];
+    [self.overlayHideTimer invalidate];
+    self.overlayHideTimer = nil;
+}
+
+- (void)toggleOverlayControls {
+    if (_overlayControlsVisible) {
+        [self hideOverlayControls];
+    } else {
+        [self showOverlayControls];
+    }
+}
+
+- (void)resetOverlayHideTimer {
+    [self.overlayHideTimer invalidate];
+    self.overlayHideTimer = [NSTimer scheduledTimerWithTimeInterval:kOverlayAutoHideDelay
+                                                              target:self
+                                                            selector:@selector(hideOverlayControls)
+                                                            userInfo:nil
+                                                             repeats:NO];
+}
+
+- (void)audioButtonTapped {
+    [self showStreamSelectionForAudio:YES];
+    [self resetOverlayHideTimer];
+}
+
+- (void)subtitleButtonTapped {
+    [self showStreamSelectionForAudio:NO];
+    [self resetOverlayHideTimer];
+}
+
+#pragma mark - Stream Selection
+
+- (void)showStreamSelectionForAudio:(BOOL)isAudio {
+    UIWindow *window = self.activePlayerController.view.window;
+    if (!window) window = [UIApplication sharedApplication].keyWindow;
+    if (!window) return;
+
+    _streamSelectionView = [[OEStreamSelectionView alloc] initWithFrame:CGRectZero
+                                                           audioStreams:self.audioStreams
+                                                        subtitleStreams:self.subtitleStreams
+                                                     selectedAudioIndex:self.selectedAudioIndex
+                                                  selectedSubtitleIndex:self.selectedSubtitleIndex
+                                                            delegate:self];
+    [_streamSelectionView showInWindow:window];
+}
+
+- (void)streamSelectionView:(OEStreamSelectionView *)view
+       didSelectAudioIndex:(NSInteger)audioIndex {
+    NSLog(@"[OldEmby] selected audio index: %ld", (long)audioIndex);
+    self.selectedAudioIndex = audioIndex;
+    [self switchStreamsWithNewAudio:audioIndex subtitle:self.selectedSubtitleIndex];
+}
+
+- (void)streamSelectionView:(OEStreamSelectionView *)view
+      didSelectSubtitleIndex:(NSInteger)subtitleIndex {
+    NSLog(@"[OldEmby] selected subtitle index: %ld", (long)subtitleIndex);
+    self.selectedSubtitleIndex = subtitleIndex;
+    [self switchStreamsWithNewAudio:self.selectedAudioIndex subtitle:subtitleIndex];
+}
+
+- (void)streamSelectionViewDidDismiss:(OEStreamSelectionView *)view {
+    self.streamSelectionView = nil;
+}
+
+#pragma mark - Stream Switching
+
+- (void)switchStreamsWithNewAudio:(NSInteger)audioIndex subtitle:(NSInteger)subtitleIndex {
+    // Only works for HLS transcode playback (not direct stream).
+    // For direct stream, we cannot switch audio/subtitle via URL params;
+    // the user would need to re-play with transcode mode.
+    if (self.currentPlaybackIsDirect) {
+        // For direct stream, we can still load external subtitles.
+        if (subtitleIndex >= 0 && subtitleIndex < (NSInteger)self.subtitleStreams.count) {
+            [self loadSubtitleForIndex:subtitleIndex];
+        } else {
+            [self clearSubtitles];
+        }
+        return;
+    }
+
+    // For HLS transcode, rebuild the URL with AudioStreamIndex and SubtitleStreamIndex.
+    NSString *baseURL = self.activeStreamURLString;
+    if (!baseURL.length) return;
+
+    OEEmbyAPIClient *client = [OEEmbyAPIClient sharedClient];
+    NSInteger audioStreamIndex = -1;
+    if (audioIndex >= 0 && audioIndex < (NSInteger)self.audioStreams.count) {
+        OEStreamInfo *info = self.audioStreams[audioIndex];
+        audioStreamIndex = [info.index integerValue];
+    }
+
+    NSInteger subStreamIndex = -1;
+    if (subtitleIndex >= 0 && subtitleIndex < (NSInteger)self.subtitleStreams.count) {
+        OEStreamInfo *info = self.subtitleStreams[subtitleIndex];
+        subStreamIndex = [info.index integerValue];
+    }
+
+    NSString *newURL = [client streamURLWithAudioIndex:audioStreamIndex
+                                         subtitleIndex:subStreamIndex
+                                          fromBaseURL:baseURL
+                                               itemId:self.item.itemId];
+    if (!newURL.length) {
+        NSLog(@"[OldEmby] failed to rebuild stream URL with audio/subtitle index");
+        return;
+    }
+
+    NSURL *url = [NSURL URLWithString:newURL];
+    if (!url) {
+        NSLog(@"[OldEmby] rebuilt URL is not parseable: %@", newURL);
+        return;
+    }
+
+    // Remember current playback position for resume.
+    NSTimeInterval currentPos = 0;
+    @try { currentPos = self.activePlayerController.moviePlayer.currentPlaybackTime; } @catch (NSException *e) {
+        NSLog(@"[OldEmby] currentPlaybackTime exception: %@", e);
+    }
+
+    // Remove old observers before swapping content URL.
+    MPMoviePlayerController *player = self.activePlayerController.moviePlayer;
+    [self removePlayerObserversForPlayer:player];
+    [self cleanupSubtitleTimer];
+
+    // Set the new content URL and restart.
+    [player setContentURL:url];
+    self.activeStreamURLString = newURL;
+    self.playerBecamePlayable = NO;
+
+    // Re-add observers for the new playback session.
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieLoadStateChanged:) name:MPMoviePlayerLoadStateDidChangeNotification object:player];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(moviePlaybackStateChanged:) name:MPMoviePlayerPlaybackStateDidChangeNotification object:player];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieFinished:) name:MPMoviePlayerPlaybackDidFinishNotification object:player];
+
+    @try { [player prepareToPlay]; } @catch (NSException *e) {
+        NSLog(@"[OldEmby] prepareToPlay after stream switch: %@", e);
+    }
+
+    // Restore playback position after the player becomes playable.
+    if (currentPos > 0) {
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf || !strongSelf.activePlayerController) return;
+            MPMoviePlayerController *p = strongSelf.activePlayerController.moviePlayer;
+            if (p && p.loadState & MPMovieLoadStatePlayable) {
+                @try { p.currentPlaybackTime = currentPos; } @catch (NSException *e) {
+                    NSLog(@"[OldEmby] seek after switch: %@", e);
+                }
+            }
+        });
+    }
+
+    // Load external subtitle if selected (for display alongside burned-in subs).
+    if (subtitleIndex >= 0 && subtitleIndex < (NSInteger)self.subtitleStreams.count) {
+        [self loadSubtitleForIndex:subtitleIndex];
+    } else {
+        [self clearSubtitles];
+    }
+}
+
+#pragma mark - Subtitle Loading & Display
+
+- (void)startSubtitlePlayback {
+    [self clearSubtitles];
+    if (self.selectedSubtitleIndex >= 0 && self.selectedSubtitleIndex < (NSInteger)self.subtitleStreams.count) {
+        [self loadSubtitleForIndex:self.selectedSubtitleIndex];
+    }
+}
+
+- (void)loadSubtitleForIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.subtitleStreams.count) return;
+    OEStreamInfo *info = self.subtitleStreams[index];
+    if (!info.index.length || !info.mediaSourceId.length) {
+        NSLog(@"[OldEmby] cannot load subtitle: missing index or mediaSourceId");
+        return;
+    }
+
+    self.subtitleLoading = YES;
+    [self clearSubtitleTimer];
+
+    OEEmbyAPIClient *client = [OEEmbyAPIClient sharedClient];
+    NSInteger streamIdx = [info.index integerValue];
+    // Always request SRT from the server: Emby's subtitle endpoint transcodes
+    // all text subtitle formats (ASS, SSA, VTT, etc.) to SRT on the fly.
+    // However, some server versions may ignore the format and return the
+    // original text, so the parser auto-detects the actual format.
+    NSString *format = @"srt";
+
+    [client fetchSubtitleForItem:self.item.itemId
+                   mediaSourceId:info.mediaSourceId
+                     streamIndex:streamIdx
+                          format:format
+                      completion:^(id result, NSError *error) {
+        self.subtitleLoading = NO;
+        if (error || ![result isKindOfClass:[NSString class]]) {
+            NSLog(@"[OldEmby] subtitle fetch failed: %@", error);
+            return;
+        }
+        NSString *subtitleText = (NSString *)result;
+        if (!subtitleText.length) {
+            NSLog(@"[OldEmby] subtitle text is empty");
+            return;
+        }
+        // Auto-detect format and parse (handles SRT, VTT, ASS/SSA, LRC).
+        self.parsedSubtitleCues = [OESubtitleParser parse:subtitleText];
+        if (!self.parsedSubtitleCues.count) {
+            NSLog(@"[OldEmby] no cues parsed from subtitle text (format may be unsupported)");
+            return;
+        }
+        [self startSubtitleTimer];
+    }];
+}
+
+- (void)startSubtitleTimer {
+    [self clearSubtitleTimer];
+    self.subtitleTimer = [NSTimer scheduledTimerWithTimeInterval:0.3
+                                                         target:self
+                                                       selector:@selector(updateSubtitleDisplay)
+                                                       userInfo:nil
+                                                        repeats:YES];
+}
+
+- (void)clearSubtitleTimer {
+    [self.subtitleTimer invalidate];
+    self.subtitleTimer = nil;
+}
+
+- (void)updateSubtitleDisplay {
+    if (!self.subtitleOverlay || !self.parsedSubtitleCues.count) return;
+    MPMoviePlayerController *player = self.activePlayerController.moviePlayer;
+    if (!player) return;
+    NSTimeInterval currentTime = 0;
+    @try { currentTime = player.currentPlaybackTime; } @catch (NSException *e) { return; }
+    if (currentTime <= 0) return;
+    OESubtitleCue *cue = [OESubtitleParser cueForTime:currentTime inCues:self.parsedSubtitleCues];
+    if (cue) {
+        [self.subtitleOverlay setSubtitleText:cue.text];
+    } else {
+        [self.subtitleOverlay setSubtitleText:nil];
+    }
+}
+
+- (void)clearSubtitles {
+    [self clearSubtitleTimer];
+    self.parsedSubtitleCues = nil;
+    if (self.subtitleOverlay) [self.subtitleOverlay setSubtitleText:nil];
+}
+
+- (void)cleanupOverlayAndSubtitles {
+    [self clearSubtitles];
+    [self.overlayHideTimer invalidate];
+    self.overlayHideTimer = nil;
+    if (_streamSelectionView) {
+        [_streamSelectionView dismiss];
+        _streamSelectionView = nil;
+    }
+    if (_overlayControlsView) {
+        [_overlayControlsView removeFromSuperview];
+        _overlayControlsView = nil;
+    }
+    if (_subtitleOverlay) {
+        [_subtitleOverlay removeFromSuperview];
+        _subtitleOverlay = nil;
+    }
+    _audioButton = nil;
+    _subtitleButton = nil;
+}
+
 - (void)dealloc {
     ++self.playRequestGeneration;
     MPMoviePlayerController *moviePlayer = self.activePlayerController.moviePlayer;
     [self removePlayerObserversForPlayer:moviePlayer];
+    [self cleanupOverlayAndSubtitles];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
-    // Stop the player synchronously before deallocation so that iOS 6's
-    // internal performSelector:afterDelay: teardown callbacks are cancelled
-    // rather than firing later on a freed object.
     if (moviePlayer) {
         @try { [moviePlayer stop]; } @catch (NSException *e) {
             NSLog(@"[OldEmby] dealloc stop exception: %@", e);
         }
     }
     MPMoviePlayerViewController *controller = self.activePlayerController;
-    // Same deferred-release rationale as finishDismissingPlayer: let iOS 6's
-    // MPMoviePlayer teardown commit finish before the controller is
-    // deallocated. The block captures the controller (not self, which is being
-    // deallocated) and releases it on the next run-loop tick.
     if (controller) {
         dispatch_async(dispatch_get_main_queue(), ^{ [controller class]; });
     }

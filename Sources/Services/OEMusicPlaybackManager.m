@@ -216,8 +216,16 @@
     // Transcoded streams often carry an indefinite duration; keep the
     // RunTimeTicks-derived value seeded in loadCurrentItem in that case.
     if (!isfinite(duration) || duration <= 0) duration = self.duration;
+    if (duration <= 0) return;
     NSTimeInterval currentTime = CMTimeGetSeconds(current);
-    if (duration <= 0 || !isfinite(currentTime)) return;
+    // After a seek the player may briefly report a stale or NaN position
+    // before settling at the target. If the reported time is invalid,
+    // skip updating so the slider does not flicker back to zero.
+    if (!isfinite(currentTime) || currentTime < 0) {
+        self.progress = MIN(1.0, MAX(0.0, self.currentTime / duration));
+        [self publishProgress];
+        return;
+    }
     self.duration = duration;
     self.currentTime = MAX(0, currentTime);
     self.progress = MIN(1.0, MAX(0.0, self.currentTime / duration));
@@ -300,9 +308,23 @@
     // releases the full-player slider. The synchronous selector is available
     // on the deployment target and is sufficient for this UI.
     [self.player seekToTime:target];
-    self.seeking = NO;
-    [self updateProgress];
-    if (completion) completion(YES);
+    // Optimistically update currentTime/progress to the seek target so the
+    // periodic time observer does not snap the slider back to the old
+    // position before AVPlayer finishes the asynchronous seek.
+    self.currentTime = CMTimeGetSeconds(target);
+    self.progress = MIN(1.0, MAX(0.0, progress));
+    // Keep seeking alive briefly so updateProgress (fired by the periodic
+    // time observer) does not overwrite the slider with a stale position
+    // during the seek. Clear after a short delay that covers the typical
+    // seek latency on iOS 6 devices.
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        OEMusicPlaybackManager *strong = weakSelf;
+        if (!strong) return;
+        strong.seeking = NO;
+        [strong updateProgress];
+        if (completion) completion(YES);
+    });
 }
 
 - (void)itemDidFinish:(NSNotification *)notification {

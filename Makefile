@@ -23,6 +23,7 @@ OldEmby_FILES = \
 	Sources/Models/OEEmbyItem.m \
 	Sources/Models/OECastItem.m \
 	Sources/Models/OELyricsLine.m \
+	Sources/Models/OESRTSubtitleParser.m \
 	Sources/Models/OETranscodeSettings.m \
 	Sources/Models/OEServerConfig.m \
 	Sources/Services/OEEmbyAPIClient.m \
@@ -36,6 +37,8 @@ OldEmby_FILES = \
 	Sources/Views/OEMiniPlayerView.m \
 	Sources/Views/OECastStripView.m \
 	Sources/Views/OEMediaInfoView.m \
+	Sources/Views/OESubtitleOverlayView.m \
+	Sources/Views/OEStreamSelectionView.m \
 	Sources/Views/OEErrorAlertView.m
 
 OldEmby_FRAMEWORKS = UIKit Foundation MediaPlayer AVFoundation CoreGraphics QuartzCore CoreMedia AudioToolbox MediaToolbox
