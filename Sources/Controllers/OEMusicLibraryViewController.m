@@ -2,6 +2,7 @@
 #import "Constants.h"
 #import "Views/OEItemCell.h"
 #import "Views/OETheme.h"
+#import "Views/OEErrorAlertView.h"
 #import "Services/OEEmbyAPIClient.h"
 #import "Models/OEEmbyItem.h"
 #import "Controllers/OEMusicPlayerViewController.h"
@@ -169,8 +170,7 @@ typedef NS_ENUM(NSInteger, OEMusicSortMode) {
         self.title = title;
         if (error) {
             if (error.code != -1 || ![error.domain isEqualToString:@"OEEmbyAPI"]) {
-                UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"加载失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
-                [alert show];
+                [OEErrorAlertView showWithTitle:@"加载失败" error:error];
             }
             return;
         }

@@ -23,6 +23,9 @@ typedef NS_ENUM(NSInteger, OEMusicPlaybackState) {
 @property (nonatomic, readonly) NSTimeInterval currentTime;
 @property (nonatomic, readonly) NSTimeInterval duration;
 @property (nonatomic, readonly) NSString *statusText;
+// Copyable diagnostics for the most recent failure (stream URL, error domain
+// and code, track identity). Nil unless state == OEMusicPlaybackStateFailed.
+@property (nonatomic, readonly) NSString *lastErrorDetail;
 @property (nonatomic, readonly, getter=isActive) BOOL active;
 @property (nonatomic, readonly, getter=isPlaying) BOOL playing;
 

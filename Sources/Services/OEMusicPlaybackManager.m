@@ -19,6 +19,8 @@
 @property (nonatomic, assign) NSTimeInterval currentTime;
 @property (nonatomic, assign) NSTimeInterval duration;
 @property (nonatomic, copy) NSString *statusText;
+@property (nonatomic, copy) NSString *lastErrorDetail;
+@property (nonatomic, copy) NSString *activeStreamURLString;
 @property (nonatomic, assign) NSUInteger generation;
 @property (nonatomic, assign) BOOL seeking;
 @property (nonatomic, assign) BOOL userWantsPlayback;
@@ -50,6 +52,34 @@
     [[NSNotificationCenter defaultCenter] postNotificationName:kNotificationMusicPlaybackStateChanged object:self];
 }
 
+// Single funnel for every failure path so the UI always has copyable context:
+// which track, which URL, and the underlying NSError identity.
+- (void)failWithMessage:(NSString *)message error:(NSError *)error {
+    self.state = OEMusicPlaybackStateFailed;
+    self.statusText = message.length ? message : @"播放失败";
+    NSMutableString *detail = [NSMutableString string];
+    if (self.activeStreamURLString.length) [detail appendFormat:@"地址：%@", self.activeStreamURLString];
+    if (error) {
+        if (detail.length) [detail appendString:@"\n"];
+        [detail appendFormat:@"错误域：%@\n错误码：%ld", error.domain ?: @"-", (long)error.code];
+        if (error.localizedDescription.length) [detail appendFormat:@"\n%@", error.localizedDescription];
+        NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
+        if ([underlying isKindOfClass:[NSError class]]) {
+            [detail appendFormat:@"\n底层错误：%@ (%ld)", underlying.domain ?: @"-", (long)underlying.code];
+        }
+    }
+    OEEmbyItem *item = self.currentItem;
+    if (item.name.length) {
+        if (detail.length) [detail appendString:@"\n\n"];
+        [detail appendFormat:@"曲目：%@", item.name];
+    }
+    if (item.itemId.length) [detail appendFormat:@"\nItemId：%@", item.itemId];
+    self.lastErrorDetail = detail;
+    [self updateNowPlayingInfo];
+    [self publishState];
+    [[NSNotificationCenter defaultCenter] postNotificationName:kNotificationMusicPlaybackFailed object:self];
+}
+
 - (void)publishProgress {
     [[NSNotificationCenter defaultCenter] postNotificationName:kNotificationMusicPlaybackProgressChanged object:self];
 }
@@ -77,6 +107,10 @@
     self.duration = self.currentItem.runTimeTicks > 0 ? (NSTimeInterval)self.currentItem.runTimeTicks / 10000000.0 : 0;
     self.state = OEMusicPlaybackStateLoading;
     self.statusText = @"正在获取播放地址…";
+    // Clear the previous failure so a stale URL/error cannot be shown for the
+    // track now loading.
+    self.lastErrorDetail = nil;
+    self.activeStreamURLString = nil;
     [self publishState];
 
     OEEmbyItem *item = self.currentItem;
@@ -91,19 +125,17 @@
     [[OEEmbyAPIClient sharedClient] fetchStreamURLForItem:item.itemId isAudio:YES completion:^(id result, NSError *error) {
         if (generation != self.generation || item != self.currentItem) return;
         if (error) {
-            self.state = OEMusicPlaybackStateFailed;
-            self.statusText = [NSString stringWithFormat:@"播放失败：%@", error.localizedDescription ?: @"未知错误"];
-            [self updateNowPlayingInfo];
-            [self publishState];
+            [self failWithMessage:[NSString stringWithFormat:@"播放失败：%@", error.localizedDescription ?: @"未知错误"] error:error];
             return;
         }
-        NSURL *url = [result isKindOfClass:[NSString class]] ? [NSURL URLWithString:result] : nil;
+        NSString *streamURL = [result isKindOfClass:[NSString class]] ? result : nil;
+        NSURL *url = streamURL.length ? [NSURL URLWithString:streamURL] : nil;
         if (!url) {
-            self.state = OEMusicPlaybackStateFailed;
-            self.statusText = @"服务器返回了无效的播放地址";
-            [self publishState];
+            self.activeStreamURLString = streamURL;
+            [self failWithMessage:@"服务器返回了无效的播放地址" error:nil];
             return;
         }
+        self.activeStreamURLString = url.absoluteString;
         [self beginPlayingURL:url generation:generation];
     }];
 }
@@ -156,8 +188,9 @@
                     self.statusText = @"已暂停";
                 }
             } else if (self.playerItem.status == AVPlayerItemStatusFailed) {
-                self.state = OEMusicPlaybackStateFailed;
-                self.statusText = [NSString stringWithFormat:@"播放失败：%@", self.playerItem.error.localizedDescription ?: @"媒体不可播放"];
+                NSError *itemError = self.playerItem.error;
+                [self failWithMessage:[NSString stringWithFormat:@"播放失败：%@", itemError.localizedDescription ?: @"媒体不可播放"] error:itemError];
+                return;
             }
             [self updateNowPlayingInfo];
             [self publishState];
@@ -287,10 +320,7 @@
 
 - (void)itemFailed:(NSNotification *)notification {
     NSError *error = notification.userInfo[AVPlayerItemFailedToPlayToEndTimeErrorKey];
-    self.state = OEMusicPlaybackStateFailed;
-    self.statusText = [NSString stringWithFormat:@"播放失败：%@", error.localizedDescription ?: @"媒体流中断"];
-    [self updateNowPlayingInfo];
-    [self publishState];
+    [self failWithMessage:[NSString stringWithFormat:@"播放失败：%@", error.localizedDescription ?: @"媒体流中断"] error:error];
 }
 
 - (void)audioInterrupted:(NSNotification *)notification {

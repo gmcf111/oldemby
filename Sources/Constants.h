@@ -24,6 +24,9 @@
 // Notification names
 #define kNotificationPlaybackStateChanged        @"OEPlaybackStateChanged"
 #define kNotificationMusicPlaybackStateChanged   @"OEMusicPlaybackStateChanged"
+// Posted once per failure (not on every state publish) so the UI can raise a
+// single copyable error sheet. object is the OEMusicPlaybackManager.
+#define kNotificationMusicPlaybackFailed         @"OEMusicPlaybackFailed"
 #define kNotificationMusicPlaybackProgressChanged @"OEMusicPlaybackProgressChanged"
 #define kNotificationMusicMiniPlayerVisibilityChanged @"OEMusicMiniPlayerVisibilityChanged"
 #define kNotificationMusicFullPlayerVisibilityChanged @"OEMusicFullPlayerVisibilityChanged"

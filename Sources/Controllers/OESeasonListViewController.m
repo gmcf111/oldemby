@@ -6,6 +6,7 @@
 #import "Models/OECastItem.h"
 #import "Controllers/OEEpisodeListViewController.h"
 #import "Views/OETheme.h"
+#import "Views/OEErrorAlertView.h"
 #import "Views/OECastStripView.h"
 #import "Constants.h"
 
@@ -254,8 +255,7 @@ static const CGFloat kCastStripHeight = 132.0;
         if (generation != self.loadGeneration) return;
         self.title = resetTitle;
         if (error) {
-            UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"加载失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
-            [alert show];
+            [OEErrorAlertView showWithTitle:@"加载失败" error:error];
             return;
         }
         NSArray *seasons = [result isKindOfClass:[NSArray class]] ? result : @[];

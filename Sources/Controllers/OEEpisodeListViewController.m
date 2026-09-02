@@ -5,6 +5,7 @@
 #import "Models/OEServerConfig.h"
 #import "Controllers/OEVideoDetailViewController.h"
 #import "Views/OETheme.h"
+#import "Views/OEErrorAlertView.h"
 #import "Constants.h"
 
 @interface OEEpisodeListViewController ()
@@ -82,8 +83,7 @@
             if (generation != self.loadGeneration) return;
             self.title = resetTitle;
             if (error) {
-                UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"加载失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
-                [av show];
+                [OEErrorAlertView showWithTitle:@"加载失败" error:error];
                 return;
             }
             NSArray *items = [result isKindOfClass:[NSArray class]] ? result : @[];
@@ -108,8 +108,7 @@
         if (generation != self.loadGeneration) return;
         self.title = resetTitle;
         if (error) {
-            UIAlertView *av = [[UIAlertView alloc] initWithTitle:@"加载失败" message:error.localizedDescription delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
-            [av show];
+            [OEErrorAlertView showWithTitle:@"加载失败" error:error];
             return;
         }
         id candidate = [result isKindOfClass:[NSDictionary class]] ? result[@"Items"] : nil;

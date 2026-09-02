@@ -1,5 +1,6 @@
 #import "OERootTabBarController.h"
 #import "Views/OEMiniPlayerView.h"
+#import "Views/OEErrorAlertView.h"
 #import "Services/OEMusicPlaybackManager.h"
 #import "Controllers/OEMusicPlayerViewController.h"
 #import "Constants.h"
@@ -28,7 +29,17 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateMiniPlayerVisibility) name:kNotificationMusicPlaybackStateChanged object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateMiniPlayerVisibility) name:kNotificationMusicFullPlayerVisibilityChanged object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(showFullPlayerFromMiniPlayer) name:@"OEMiniPlayerDidRequestFullPlayer" object:nil];
+    // Music failures can happen while any tab is on screen (playback is
+    // global), so the always-present root controller owns the error sheet.
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(showMusicPlaybackFailure:) name:kNotificationMusicPlaybackFailed object:nil];
     [self updateMiniPlayerVisibility];
+}
+
+- (void)showMusicPlaybackFailure:(NSNotification *)notification {
+    OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
+    [OEErrorAlertView showWithTitle:@"音乐播放失败"
+                            message:manager.statusText ?: @"未知错误"
+                             detail:manager.lastErrorDetail];
 }
 
 - (void)viewDidLayoutSubviews {

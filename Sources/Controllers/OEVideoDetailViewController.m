@@ -6,6 +6,7 @@
 #import "Services/OEImageCache.h"
 #import "Views/OETheme.h"
 #import "Views/OECastStripView.h"
+#import "Views/OEErrorAlertView.h"
 #import "Constants.h"
 #import <MediaPlayer/MediaPlayer.h>
 
@@ -37,6 +38,8 @@ static const CGFloat kCastStripHeight = 132.0;
 @property (nonatomic, assign) NSUInteger playRequestGeneration;
 @property (nonatomic, assign) NSInteger pendingFinishReason;
 @property (nonatomic, strong) NSError *pendingPlaybackError;
+// Kept for diagnostics: shown (and copyable) in the failure sheet.
+@property (nonatomic, copy) NSString *activeStreamURLString;
 @end
 
 @implementation OEVideoDetailViewController
@@ -246,16 +249,19 @@ static const CGFloat kCastStripHeight = 132.0;
         self.fetchingStream = NO;
         self.playBtn.enabled = YES;
         [self.playBtn setTitle:[self playButtonTitle] forState:UIControlStateNormal];
-        if (error) { [self showPlaybackError:error.localizedDescription]; return; }
+        if (error) {
+            NSString *detail = [NSString stringWithFormat:@"错误域：%@\n错误码：%ld", error.domain ?: @"-", (long)error.code];
+            [self showPlaybackError:error.localizedDescription ?: @"请求播放地址失败" detail:detail];
+            return;
+        }
         NSString *streamURL = [result isKindOfClass:[NSString class]] ? result : nil;
         NSURL *url = [NSURL URLWithString:streamURL];
         // The API client already validated and repaired the URL. Requiring a
         // non-empty scheme/host here as well used to reject playable streams,
         // so only bail out when NSURL produced nothing at all.
         if (!url) {
-            [self showPlaybackError:streamURL.length
-                ? [NSString stringWithFormat:@"服务器返回了无效的播放地址：%@", streamURL]
-                : @"服务器返回了无效的播放地址"];
+            [self showPlaybackError:@"服务器返回了无效的播放地址"
+                             detail:streamURL.length ? [NSString stringWithFormat:@"地址：%@", streamURL] : @"服务器未返回任何地址"];
             return;
         }
         if (self.activePlayerController || self.dismissingPlayer) return;
@@ -274,8 +280,9 @@ static const CGFloat kCastStripHeight = 132.0;
 
 - (void)presentPlayerForURL:(NSURL *)url {
     if (!url || self.activePlayerController || self.dismissingPlayer) return;
+    self.activeStreamURLString = url.absoluteString;
     MPMoviePlayerViewController *controller = [[MPMoviePlayerViewController alloc] initWithContentURL:url];
-    if (!controller || !controller.moviePlayer) { [self showPlaybackError:@"无法初始化系统播放器"]; return; }
+    if (!controller || !controller.moviePlayer) { [self showPlaybackError:@"无法初始化系统播放器" detail:[NSString stringWithFormat:@"地址：%@", url.absoluteString]]; return; }
     self.activePlayerController = controller;
     self.playerBecamePlayable = NO;
     self.dismissingPlayer = NO;
@@ -308,13 +315,29 @@ static const CGFloat kCastStripHeight = 132.0;
     else if (player.playbackState == MPMoviePlaybackStateInterrupted) self.statusLabel.text = @"播放被中断";
 }
 
+- (NSString *)playbackFailureDetail {
+    NSMutableString *detail = [NSMutableString string];
+    if (self.activeStreamURLString.length) [detail appendFormat:@"地址：%@", self.activeStreamURLString];
+    NSError *error = self.pendingPlaybackError;
+    if (error) {
+        if (detail.length) [detail appendString:@"\n"];
+        [detail appendFormat:@"错误域：%@\n错误码：%ld", error.domain ?: @"-", (long)error.code];
+        NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
+        if ([underlying isKindOfClass:[NSError class]]) {
+            [detail appendFormat:@"\n底层错误：%@ (%ld)", underlying.domain ?: @"-", (long)underlying.code];
+            if (underlying.localizedDescription.length) [detail appendFormat:@"\n%@", underlying.localizedDescription];
+        }
+    }
+    return detail;
+}
+
 - (void)finishDismissingPlayer {
     MPMoviePlayerViewController *controller = self.activePlayerController;
     self.dismissingPlayer = NO;
     if (self.pendingFinishReason == MPMovieFinishReasonPlaybackError) {
         NSString *msg = self.pendingPlaybackError.localizedDescription;
         if (!msg.length) msg = @"系统播放器无法播放该 HLS 流，请检查 Emby 转码日志与 HLS 版本设置";
-        [self showPlaybackError:msg];
+        [self showPlaybackError:msg detail:[self playbackFailureDetail]];
     } else if (self.pendingFinishReason == MPMovieFinishReasonUserExited) {
         self.statusLabel.text = @"已退出播放";
     } else if (self.pendingFinishReason == MPMovieFinishReasonPlaybackEnded) {
@@ -326,7 +349,8 @@ static const CGFloat kCastStripHeight = 132.0;
         NSString *detail = self.pendingPlaybackError.localizedDescription;
         [self showPlaybackError:detail.length
             ? [NSString stringWithFormat:@"播放器未取得可播放数据：%@", detail]
-            : @"播放器未取得可播放数据（请确认 Emby 转码为 H.264+AAC 的 HLS，且 HLS 版本兼容 iOS 6）"];
+            : @"播放器未取得可播放数据（请确认 Emby 转码为 H.264+AAC 的 HLS，且 HLS 版本兼容 iOS 6）"
+                         detail:[self playbackFailureDetail]];
     } else {
         self.statusLabel.text = @"播放结束";
     }
@@ -357,9 +381,26 @@ static const CGFloat kCastStripHeight = 132.0;
 }
 
 - (void)showPlaybackError:(NSString *)message {
+    [self showPlaybackError:message detail:nil];
+}
+
+// detail carries the raw material worth pasting into a bug report (stream URL,
+// server body, NSError domain/code). It is shown in a selectable text view.
+- (void)showPlaybackError:(NSString *)message detail:(NSString *)detail {
     self.statusLabel.text = @"播放失败";
-    UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"播放失败" message:message delegate:nil cancelButtonTitle:@"确定" otherButtonTitles:nil];
-    [alert show];
+    NSMutableString *context = [NSMutableString string];
+    if (detail.length) [context appendString:detail];
+    if (self.item.name.length) {
+        if (context.length) [context appendString:@"\n\n"];
+        [context appendFormat:@"项目：%@", self.item.name];
+    }
+    if (self.item.itemId.length) [context appendFormat:@"\nItemId：%@", self.item.itemId];
+    OETranscodeSettings *settings = [OETranscodeSettings sharedSettings];
+    [context appendFormat:@"\n模式：%@", settings.directPlay ? @"直接播放" : @"转码"];
+    if (!settings.directPlay) {
+        [context appendFormat:@" %@ / %ld kbps", [settings resolutionString], (long)settings.maxVideoBitrate / 1000];
+    }
+    [OEErrorAlertView showWithTitle:@"播放失败" message:message ?: @"未知错误" detail:context];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
