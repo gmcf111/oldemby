@@ -7,6 +7,7 @@
 #import "Views/OETheme.h"
 #import "Views/OECastStripView.h"
 #import "Views/OEErrorAlertView.h"
+#import "Views/OEMediaInfoView.h"
 #import "Constants.h"
 #import <MediaPlayer/MediaPlayer.h>
 
@@ -30,6 +31,8 @@ static const CGFloat kCastStripHeight = 132.0;
 @property (nonatomic, strong) UIButton *directPlayBtn;
 @property (nonatomic, strong) UILabel *castHeaderLabel;
 @property (nonatomic, strong) OECastStripView *castStrip;
+@property (nonatomic, strong) UILabel *mediaInfoHeaderLabel;
+@property (nonatomic, strong) OEMediaInfoView *mediaInfoView;
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) MPMoviePlayerViewController *activePlayerController;
@@ -114,6 +117,17 @@ static const CGFloat kCastStripHeight = 132.0;
     self.castStrip.casts = @[];
     [self.contentView addSubview:self.castStrip];
 
+    // Media info header
+    self.mediaInfoHeaderLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.mediaInfoHeaderLabel.font = [UIFont boldSystemFontOfSize:14];
+    self.mediaInfoHeaderLabel.text = @"媒体信息";
+    self.mediaInfoHeaderLabel.backgroundColor = [UIColor clearColor];
+    [self.contentView addSubview:self.mediaInfoHeaderLabel];
+
+    // Media info view (video/audio stream details)
+    self.mediaInfoView = [[OEMediaInfoView alloc] initWithFrame:CGRectZero];
+    [self.contentView addSubview:self.mediaInfoView];
+
     // Status label
     self.statusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.statusLabel.font = [UIFont systemFontOfSize:12];
@@ -154,6 +168,9 @@ static const CGFloat kCastStripHeight = 132.0;
     // Fetch cast list
     [self loadCasts];
 
+    // Fetch media stream info (video/audio codec, resolution, channels, etc.)
+    [self loadMediaInfo];
+
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyTheme) name:kNotificationThemeDidChange object:nil];
 }
 
@@ -185,6 +202,16 @@ static const CGFloat kCastStripHeight = 132.0;
     }];
 }
 
+- (void)loadMediaInfo {
+    NSString *itemId = self.item.itemId;
+    if (!itemId.length) return;
+    [[OEEmbyAPIClient sharedClient] fetchMediaSourcesForItem:itemId completion:^(id result, NSError *error) {
+        if (error || ![result isKindOfClass:[NSArray class]]) return;
+        self.mediaInfoView.mediaSources = result;
+        [self.view setNeedsLayout];
+    }];
+}
+
 - (void)applyTheme {
     self.view.backgroundColor = [OETheme libraryBackgroundColor];
     self.scrollView.backgroundColor = [OETheme libraryBackgroundColor];
@@ -195,6 +222,8 @@ static const CGFloat kCastStripHeight = 132.0;
     self.overviewHeaderLabel.textColor = [OETheme accentColor];
     self.overviewLabel.textColor = [OETheme secondaryTextColor];
     self.castHeaderLabel.textColor = [OETheme primaryTextColor];
+    self.mediaInfoHeaderLabel.textColor = [OETheme primaryTextColor];
+    [self.mediaInfoView applyTheme];
     self.statusLabel.textColor = [OETheme accentColor];
     self.directPlayBtn.layer.borderColor = [OETheme accentColor].CGColor;
     [self.directPlayBtn setTitleColor:[OETheme accentColor] forState:UIControlStateNormal];
@@ -251,8 +280,15 @@ static const CGFloat kCastStripHeight = 132.0;
     CGFloat castY = CGRectGetMaxY(self.castHeaderLabel.frame) + 6;
     self.castStrip.frame = CGRectMake(margin, castY, w - 2 * margin, kCastStripHeight);
 
+    // Media info section
+    CGFloat mediaInfoY = CGRectGetMaxY(self.castStrip.frame) + 16;
+    self.mediaInfoHeaderLabel.frame = CGRectMake(margin, mediaInfoY, w - 2 * margin, 20);
+    CGFloat mediaInfoViewY = CGRectGetMaxY(self.mediaInfoHeaderLabel.frame) + 6;
+    CGFloat mediaInfoHeight = [self.mediaInfoView heightForWidth:w - 2 * margin];
+    self.mediaInfoView.frame = CGRectMake(margin, mediaInfoViewY, w - 2 * margin, mediaInfoHeight);
+
     // Play button + status + direct play button
-    CGFloat playY = CGRectGetMaxY(self.castStrip.frame) + 16;
+    CGFloat playY = CGRectGetMaxY(self.mediaInfoView.frame) + 16;
     self.statusLabel.frame = CGRectMake(margin, playY, w - 2 * margin, 18);
     playY += 22;
     self.playBtn.frame = CGRectMake(margin, playY, w - 2 * margin, 46);

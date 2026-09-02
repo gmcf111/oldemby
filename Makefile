@@ -35,6 +35,7 @@ OldEmby_FILES = \
 	Sources/Views/OEIconFactory.m \
 	Sources/Views/OEMiniPlayerView.m \
 	Sources/Views/OECastStripView.m \
+	Sources/Views/OEMediaInfoView.m \
 	Sources/Views/OEErrorAlertView.m
 
 OldEmby_FRAMEWORKS = UIKit Foundation MediaPlayer AVFoundation CoreGraphics QuartzCore CoreMedia AudioToolbox MediaToolbox

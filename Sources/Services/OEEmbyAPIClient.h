@@ -38,6 +38,10 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 - (void)fetchLyricsForAudioItem:(OEEmbyItem *)item completion:(OEAPICompletion)completion;
 - (void)fetchLyricsForItem:(NSString *)itemId completion:(OEAPICompletion)completion;
 
+// Media info: fetch MediaSources (video/audio stream metadata) for an item.
+// Returns the MediaSources array from a PlaybackInfo response.
+- (void)fetchMediaSourcesForItem:(NSString *)itemId completion:(OEAPICompletion)completion;
+
 // Casts (actors / directors etc.)
 // Fetches the people list for the given item via /Items/{Id} with Fields=People.
 // Returns an array of OECastItem objects on success.

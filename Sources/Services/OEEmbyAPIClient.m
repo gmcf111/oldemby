@@ -628,6 +628,49 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     }];
 }
 
+#pragma mark - Media Sources
+
+- (void)fetchMediaSourcesForItem:(NSString *)itemId completion:(OEAPICompletion)completion {
+    if (!itemId.length) {
+        if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Missing item ID"}]);
+        return;
+    }
+    // Request PlaybackInfo with a direct-play profile so the server returns
+    // the original MediaSources with full stream metadata (codec, resolution,
+    // channels, bitrate, etc.).  The transcode settings used here should not
+    // affect which MediaSources are returned — only which URL is selected.
+    OEServerConfig *c = [OEServerConfig sharedConfig];
+    OETranscodeSettings *direct = [OETranscodeSettings defaultSettings];
+    direct.directPlay = YES;
+    NSDictionary *body = [OETranscodeBuilder playbackInfoBodyForItemId:itemId userId:c.userId settings:direct isAudio:NO];
+    NSString *path = [NSString stringWithFormat:@"/Items/%@/PlaybackInfo", itemId];
+    [self POST:path jsonBody:body completion:^(id result, NSError *error) {
+        if (error) { if (completion) completion(nil, error); return; }
+        if (![result isKindOfClass:[NSDictionary class]]) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"Invalid PlaybackInfo response"}]);
+            return;
+        }
+        NSArray *sources = result[@"MediaSources"];
+        if (![sources isKindOfClass:[NSArray class]]) {
+            // Some Emby versions embed MediaSources directly in the item detail.
+            // Try fetching via the user-scoped item endpoint as a fallback.
+            NSString *itemPath = [NSString stringWithFormat:@"/Users/%@/Items/%@", c.userId ?: @"", itemId];
+            NSDictionary *params = @{@"Fields": @"MediaSources"};
+            [self GET:itemPath params:params completion:^(id r2, NSError *e2) {
+                if (e2 || ![r2 isKindOfClass:[NSDictionary class]]) {
+                    if (completion) completion(@[], nil);
+                    return;
+                }
+                NSArray *altSources = r2[@"MediaSources"];
+                if (![altSources isKindOfClass:[NSArray class]]) altSources = @[];
+                if (completion) completion(altSources, nil);
+            }];
+            return;
+        }
+        if (completion) completion(sources, nil);
+    }];
+}
+
 #pragma mark - Casts
 
 - (void)fetchCastsForItem:(NSString *)itemId completion:(OEAPICompletion)completion {
