@@ -159,7 +159,6 @@ static const CGFloat kInfoCornerRadius = 8.0;
 
         NSString *codec = [self safeString:v[@"Codec"]];
         NSString *profile = [self safeString:v[@"Profile"]];
-        NSString *resolution = [self safeString:v[@"DisplayTitle"]]; // not the best for resolution
         // Build a summary line like "1080p H264"
         NSString *widthStr = [self safeNumberString:v[@"Width"]];
         NSString *heightStr = [self safeNumberString:v[@"Height"]];
