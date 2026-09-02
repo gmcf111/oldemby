@@ -397,7 +397,16 @@ static const CGFloat kCastStripHeight = 132.0;
         // MPMovieSourceTypeStreaming forces HLS-style buffering heuristics
         // that stall progressive HTTP downloads on iOS 6.
         controller.moviePlayer.movieSourceType = isDirectStream ? MPMovieSourceTypeFile : MPMovieSourceTypeStreaming;
-        controller.moviePlayer.shouldAutoplay = YES;
+        // Do NOT set shouldAutoplay = YES.  On iOS 6, shouldAutoplay
+        // triggers an internal performSelector:afterDelay: auto-play
+        // path in MPMoviePlayerController.  If the stream is not
+        // directly decodable (unsupported codec, malformed HLS), that
+        // delayed callback throws an NSInvalidArgumentException that
+        // @try/@catch cannot intercept (it fires in a separate RunLoop
+        // tick).  Instead, we call [player play] explicitly from
+        // movieLoadStateChanged: when the load state reaches
+        // MPMovieLoadStatePlayable, which is the safe, synchronous path.
+        controller.moviePlayer.shouldAutoplay = NO;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieLoadStateChanged:) name:MPMoviePlayerLoadStateDidChangeNotification object:controller.moviePlayer];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(moviePlaybackStateChanged:) name:MPMoviePlayerPlaybackStateDidChangeNotification object:controller.moviePlayer];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieFinished:) name:MPMoviePlayerPlaybackDidFinishNotification object:controller.moviePlayer];
@@ -416,7 +425,9 @@ static const CGFloat kCastStripHeight = 132.0;
         }
     } @catch (NSException *e) {
         NSLog(@"[OldEmby] presentPlayerForURL exception: %@", e);
-        [self.activePlayerController.moviePlayer stop];
+        @try { [self.activePlayerController.moviePlayer stop]; } @catch (NSException *stopEx) {
+            NSLog(@"[OldEmby] cleanup stop exception: %@", stopEx);
+        }
         [self removePlayerObserversForPlayer:self.activePlayerController.moviePlayer];
         self.activePlayerController = nil;
         self.dismissingPlayer = NO;
@@ -431,7 +442,12 @@ static const CGFloat kCastStripHeight = 132.0;
     if (player.loadState & MPMovieLoadStatePlayable) {
         self.playerBecamePlayable = YES;
         self.statusLabel.text = @"视频已就绪";
-        [player play];
+        // Guard the explicit play call: on iOS 6 the system player can
+        // throw from this synchronous entry point when the underlying
+        // asset is not decodable.
+        @try { [player play]; } @catch (NSException *playEx) {
+            NSLog(@"[OldEmby] player play exception: %@", playEx);
+        }
     } else if (player.loadState & MPMovieLoadStateStalled) {
         self.statusLabel.text = @"视频缓冲中…";
     }
