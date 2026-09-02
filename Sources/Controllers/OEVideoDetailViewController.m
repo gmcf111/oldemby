@@ -24,7 +24,6 @@ static const CGFloat kCastStripHeight = 132.0;
 static const CGFloat kOverlayButtonSize = 40.0;
 static const CGFloat kOverlayButtonSpacing = 12.0;
 static const CGFloat kOverlayBottomMargin = 52.0; // below system volume bar
-static const CGFloat kOverlayAutoHideDelay = 5.0;
 
 @interface OEVideoDetailViewController () <OEStreamSelectionDelegate>
 @property (nonatomic, strong) OEEmbyItem *item;
