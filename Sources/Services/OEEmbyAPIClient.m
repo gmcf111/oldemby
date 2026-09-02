@@ -451,7 +451,6 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             }
         }
         if (!containerSupported) {
-            NSString *fmtName = container.length ? container.uppercaseString : @"未知格式";
             if (isAudio) {
                 // Audio: also check common audio containers
                 static NSArray *audioExt = nil;
