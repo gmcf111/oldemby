@@ -23,7 +23,7 @@ static const CGFloat kDetailCoverMaxHeight = 300.0;
 static const CGFloat kCastStripHeight = 132.0;
 static const CGFloat kOverlayButtonSize = 40.0;
 static const CGFloat kOverlayButtonSpacing = 12.0;
-static const CGFloat kOverlayBottomMargin = 8.0;
+static const CGFloat kOverlayBottomMargin = 52.0; // below system volume bar
 static const CGFloat kOverlayAutoHideDelay = 5.0;
 
 @interface OEVideoDetailViewController () <OEStreamSelectionDelegate>
@@ -617,6 +617,8 @@ static const CGFloat kOverlayAutoHideDelay = 5.0;
     UIView *playerView = self.activePlayerController.view;
     if (!playerView) return;
 
+    // Persistent container for audio/subtitle buttons — always visible,
+    // not affected by the auto-hide timer.
     _overlayControlsView = [[UIView alloc] initWithFrame:CGRectZero];
     _overlayControlsView.backgroundColor = [UIColor clearColor];
     _overlayControlsView.userInteractionEnabled = YES;
@@ -648,13 +650,10 @@ static const CGFloat kOverlayAutoHideDelay = 5.0;
     _subtitleOverlay = [[OESubtitleOverlayView alloc] initWithFrame:CGRectZero];
     [playerView addSubview:_subtitleOverlay];
 
-    // Add a tap gesture to toggle overlay controls visibility
-    UITapGestureRecognizer *tapGesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleOverlayControls)];
-    tapGesture.cancelsTouchesInView = NO;
-    [playerView addGestureRecognizer:tapGesture];
-
     [self layoutOverlayControls];
-    [self showOverlayControls];
+
+    // Buttons are permanently visible — no auto-hide.
+    _overlayControlsVisible = YES;
 }
 
 - (void)layoutOverlayControls {
@@ -664,56 +663,31 @@ static const CGFloat kOverlayAutoHideDelay = 5.0;
     CGFloat h = playerView.bounds.size.height;
     if (w < 1 || h < 1) return;
 
+    // Place the two buttons at the bottom center, below the system
+    // volume bar and playback controls.
     CGFloat totalW = 2 * kOverlayButtonSize + kOverlayButtonSpacing;
     CGFloat startX = (w - totalW) / 2.0;
-    CGFloat y = h - kOverlayButtonSize - kOverlayBottomMargin - 40; // above system controls
+    CGFloat y = h - kOverlayButtonSize - kOverlayBottomMargin;
     _overlayControlsView.frame = CGRectMake(startX, y, totalW, kOverlayButtonSize);
     _audioButton.frame = CGRectMake(0, 0, kOverlayButtonSize, kOverlayButtonSize);
     _subtitleButton.frame = CGRectMake(kOverlayButtonSize + kOverlayButtonSpacing, 0, kOverlayButtonSize, kOverlayButtonSize);
     _subtitleOverlay.frame = CGRectMake(0, 0, w, h);
 }
 
-- (void)showOverlayControls {
-    _overlayControlsVisible = YES;
-    _overlayControlsView.alpha = 1.0;
-    [self resetOverlayHideTimer];
-}
-
-- (void)hideOverlayControls {
-    _overlayControlsVisible = NO;
-    [UIView beginAnimations:nil context:nil];
-    [UIView setAnimationDuration:0.3];
-    _overlayControlsView.alpha = 0.0;
-    [UIView commitAnimations];
-    [self.overlayHideTimer invalidate];
-    self.overlayHideTimer = nil;
-}
-
-- (void)toggleOverlayControls {
-    if (_overlayControlsVisible) {
-        [self hideOverlayControls];
-    } else {
-        [self showOverlayControls];
-    }
-}
-
-- (void)resetOverlayHideTimer {
-    [self.overlayHideTimer invalidate];
-    self.overlayHideTimer = [NSTimer scheduledTimerWithTimeInterval:kOverlayAutoHideDelay
-                                                              target:self
-                                                            selector:@selector(hideOverlayControls)
-                                                            userInfo:nil
-                                                             repeats:NO];
-}
+// Overlay controls are now permanently visible — no show/hide/toggle.
+// The methods are kept as no-ops for backwards compatibility in case
+// other code paths still call them.
+- (void)showOverlayControls { _overlayControlsVisible = YES; }
+- (void)hideOverlayControls { _overlayControlsVisible = YES; }
+- (void)toggleOverlayControls { _overlayControlsVisible = YES; }
+- (void)resetOverlayHideTimer { /* no-op */ }
 
 - (void)audioButtonTapped {
     [self showStreamSelectionForAudio:YES];
-    [self resetOverlayHideTimer];
 }
 
 - (void)subtitleButtonTapped {
     [self showStreamSelectionForAudio:NO];
-    [self resetOverlayHideTimer];
 }
 
 #pragma mark - Stream Selection
