@@ -292,7 +292,9 @@ static const CGFloat kCastStripHeight = 132.0;
     [self.playBtn setTitle:@"正在获取播放地址…" forState:UIControlStateNormal];
     self.playBtn.enabled = NO;
     self.directPlayBtn.enabled = NO;
-    fetchBlock([OEEmbyAPIClient sharedClient], self.item.itemId, ^(id result, NSError *error) {
+    OEEmbyAPIClient *client = [OEEmbyAPIClient sharedClient];
+    NSString *itemId = self.item.itemId;
+    OEAPICompletion handler = ^(id result, NSError *error) {
         if (generation != self.playRequestGeneration) return;
         self.fetchingStream = NO;
         self.playBtn.enabled = YES;
@@ -316,7 +318,8 @@ static const CGFloat kCastStripHeight = 132.0;
         if (self.activePlayerController || self.dismissingPlayer) return;
         NSLog(@"[OldEmby] video stream URL: %@", streamURL);
         [self presentPlayerForURL:url];
-    }];
+    };
+    fetchBlock(client, itemId, handler);
 }
 
 - (void)removePlayerObserversForPlayer:(MPMoviePlayerController *)player {
