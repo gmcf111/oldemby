@@ -143,14 +143,28 @@ static const CGFloat kCastStripHeight = 132.0;
 
 - (void)loadCasts {
     NSString *castItemId = self.item.seriesId.length ? self.item.seriesId : self.item.itemId;
+    NSString *fallbackItemId = self.item.seriesId.length ? self.item.itemId : nil;
     [[OEEmbyAPIClient sharedClient] fetchCastsForItem:castItemId completion:^(id result, NSError *error) {
         if (error) {
             // Silently ignore cast errors - not critical for playback
             return;
         }
-        if ([result isKindOfClass:[NSArray class]]) {
+        if ([result isKindOfClass:[NSArray class]] && ((NSArray *)result).count > 0) {
             self.castStrip.casts = result;
             [self.view setNeedsLayout];
+            return;
+        }
+        // First attempt returned no people: if we queried by seriesId, retry
+        // with the item's own Id — some Emby versions only attach People to
+        // the episode/movie item, not to the series root.
+        if (fallbackItemId.length) {
+            [[OEEmbyAPIClient sharedClient] fetchCastsForItem:fallbackItemId completion:^(id r2, NSError *e2) {
+                if (e2) return;
+                if ([r2 isKindOfClass:[NSArray class]]) {
+                    self.castStrip.casts = r2;
+                    [self.view setNeedsLayout];
+                }
+            }];
         }
     }];
 }

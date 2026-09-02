@@ -80,7 +80,11 @@
     CGFloat w = self.contentView.bounds.size.width;
     if (_episodeLayout) {
         CGFloat imageHeight = self.contentView.bounds.size.height;
-        CGFloat aspectRatio = self.primaryImageAspectRatio > 0 ? self.primaryImageAspectRatio : (2.0 / 3.0);
+        // Season/episode rows: always use the 2:3 poster aspect ratio so every
+        // season cover is the same size regardless of the server-reported
+        // PrimaryImageAspectRatio (which can vary per season and cause
+        // mismatched cover widths across seasons of the same series).
+        CGFloat aspectRatio = (2.0 / 3.0);
         CGFloat imageWidth = MAX(1.0, MIN(imageHeight * aspectRatio, w * 0.55));
         _coverView.frame = CGRectMake(0, 0, imageWidth, imageHeight);
         CGFloat textX = imageWidth + 10;

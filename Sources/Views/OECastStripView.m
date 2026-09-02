@@ -123,6 +123,14 @@ static const CGFloat kCastNameHeight = 36.0;
     _scrollView.frame = self.bounds;
     if (self.casts.count == 0) {
         _noCastLabel.frame = CGRectMake(0, 0, self.bounds.size.width, self.bounds.size.height);
+    } else {
+        // Keep contentSize height in sync with the current bounds so the
+        // scroll view always renders its subviews even if reloadData was
+        // called while the view still had a zero-height frame.
+        CGSize cs = _scrollView.contentSize;
+        if (cs.height != self.bounds.size.height) {
+            _scrollView.contentSize = CGSizeMake(cs.width, self.bounds.size.height);
+        }
     }
 }
 

@@ -164,6 +164,10 @@ static const CGFloat kCastStripHeight = 132.0;
             }
             self.castsLoaded = YES;
             self.castStrip.casts = out;
+        } else if (!self.castsLoaded) {
+            // People field was missing or not an array — fall back to the
+            // dedicated casts endpoint so the cast strip still populates.
+            [self loadCasts];
         }
     }];
 }
