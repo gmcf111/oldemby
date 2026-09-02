@@ -239,6 +239,16 @@ static const CGFloat kCastStripHeight = 132.0;
     [self.tableView reloadData];
 }
 
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    // When the auto-pushed episode list is popped back to us, continue
+    // popping so the user lands on the poster wall in one back tap.
+    if (self.didAutoPush) {
+        self.didAutoPush = NO;
+        [self.navigationController popViewControllerAnimated:YES];
+    }
+}
+
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     self.tableView.frame = self.view.bounds;
