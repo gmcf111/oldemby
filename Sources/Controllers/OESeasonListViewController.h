@@ -2,10 +2,9 @@
 @class OEEmbyItem;
 
 // Season picker for a series: lists every Season returned by
-// /Shows/{seriesId}/Seasons. When the series has only one season the
-// controller replaces itself in the navigation stack with the episode list,
-// so the user can go directly back to the library without passing through
-// an empty season page.
+// /Shows/{seriesId}/Seasons. The poster wall checks the season count
+// before pushing this controller, so single-season series go straight
+// to the episode list and skip this page entirely.
 @interface OESeasonListViewController : UIViewController <UITableViewDataSource, UITableViewDelegate>
 
 - (instancetype)initWithSeries:(OEEmbyItem *)series;
