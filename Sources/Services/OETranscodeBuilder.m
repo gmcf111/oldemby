@@ -7,9 +7,11 @@
     if (s.directPlay) {
         // Advertise the media type being requested.  A video-only profile
         // makes PlaybackInfo reject otherwise playable music sources.
+        // Only list containers iOS 6 MPMoviePlayer can natively decode:
+        // mp4 and mov.  mkv/avi are NOT supported by the system player.
         NSDictionary *directProfile = isAudio
             ? @{ @"Container": @"mp3,aac,m4a,wav", @"Type": @"Audio" }
-            : @{ @"Container": @"mp4,mkv,avi,mov", @"Type": @"Video" };
+            : @{ @"Container": @"mp4,mov,m4v", @"Type": @"Video" };
         return @{
             @"Name": @"OldEmby Direct",
             @"MaxStaticBitrate": @(100000000),

@@ -401,11 +401,49 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"Invalid PlaybackInfo response"}]);
             return;
         }
-        NSString *msId = nil;
-        NSString *url = [OETranscodeBuilder streamURLFromPlaybackInfoResponse:result itemId:itemId isAudio:isAudio host:[self baseURL] mediaSourceId:&msId];
-        if (!url) {
-            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No direct stream URL available for this item"}]);
+        // Extract the MediaSourceId and the direct stream URL directly from
+        // the PlaybackInfo response.  We intentionally do NOT call
+        // streamURLFromPlaybackInfoResponse here because that class method
+        // reads the *global* OETranscodeSettings (which may be in transcode
+        // mode) to decide which URL to build, and would produce a
+        // transcode-oriented fallback URL instead of a direct-play URL.
+        NSArray *sources = result[@"MediaSources"];
+        if (![sources isKindOfClass:[NSArray class]] || sources.count == 0) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No media sources in PlaybackInfo"}]);
             return;
+        }
+        NSString *msId = nil;
+        NSString *url = nil;
+        for (NSDictionary *candidate in sources) {
+            if (![candidate isKindOfClass:[NSDictionary class]]) continue;
+            // Prefer an explicit DirectStreamUrl from the server.
+            id dsUrl = candidate[@"DirectStreamUrl"];
+            if ([dsUrl isKindOfClass:[NSString class]] && [dsUrl length]) {
+                url = dsUrl;
+                msId = [candidate[@"Id"] isKindOfClass:[NSString class]] ? candidate[@"Id"] : msId;
+                break;
+            }
+            // Fallback: capture the first source Id for the manual URL.
+            if (!msId) msId = [candidate[@"Id"] isKindOfClass:[NSString class]] ? candidate[@"Id"] : nil;
+        }
+        // If no DirectStreamUrl was provided, build the canonical stream
+        // endpoint ourselves with Static=true (no transcoding).
+        if (!url.length) {
+            NSString *resource = isAudio ? @"Audio" : @"Videos";
+            NSString *msParam = msId.length ? [NSString stringWithFormat:@"MediaSourceId=%@&", msId] : @"";
+            url = [NSString stringWithFormat:@"/%@/%@/stream?%@Static=true", resource, itemId, msParam];
+        }
+        // Ensure the URL is absolute.
+        if (![url hasPrefix:@"http"]) {
+            NSString *base = [self baseURL];
+            if (!base.length) {
+                if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No host configured"}]);
+                return;
+            }
+            while ([base hasSuffix:@"/"] && base.length > 1) base = [base substringToIndex:base.length - 1];
+            if (![url hasPrefix:@"/"]) url = [@"/" stringByAppendingString:url];
+            if ([base hasSuffix:@"/emby"] && [url hasPrefix:@"/emby/"]) url = [url substringFromIndex:5];
+            url = [base stringByAppendingString:url];
         }
         // Force Static=true so the server hands back the original file.
         url = [url stringByReplacingOccurrencesOfString:@"Static=false" withString:@"Static=true"];

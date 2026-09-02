@@ -317,7 +317,8 @@ static const CGFloat kCastStripHeight = 132.0;
         }
         if (self.activePlayerController || self.dismissingPlayer) return;
         NSLog(@"[OldEmby] video stream URL: %@", streamURL);
-        [self presentPlayerForURL:url];
+        BOOL isDirect = [streamURL rangeOfString:@"Static=true" options:NSCaseInsensitiveSearch].location != NSNotFound;
+        [self presentPlayerForURL:url isDirectStream:isDirect];
     };
     fetchBlock(client, itemId, handler);
 }
@@ -331,6 +332,10 @@ static const CGFloat kCastStripHeight = 132.0;
 }
 
 - (void)presentPlayerForURL:(NSURL *)url {
+    [self presentPlayerForURL:url isDirectStream:NO];
+}
+
+- (void)presentPlayerForURL:(NSURL *)url isDirectStream:(BOOL)isDirectStream {
     if (!url || self.activePlayerController || self.dismissingPlayer) return;
     self.activeStreamURLString = url.absoluteString;
     MPMoviePlayerViewController *controller = [[MPMoviePlayerViewController alloc] initWithContentURL:url];
@@ -338,7 +343,10 @@ static const CGFloat kCastStripHeight = 132.0;
     self.activePlayerController = controller;
     self.playerBecamePlayable = NO;
     self.dismissingPlayer = NO;
-    controller.moviePlayer.movieSourceType = MPMovieSourceTypeStreaming;
+    // Direct stream URLs (Static=true, no HLS) play better as File sources:
+    // MPMovieSourceTypeStreaming forces HLS-style buffering heuristics
+    // that stall progressive HTTP downloads on iOS 6.
+    controller.moviePlayer.movieSourceType = isDirectStream ? MPMovieSourceTypeFile : MPMovieSourceTypeStreaming;
     controller.moviePlayer.shouldAutoplay = YES;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieLoadStateChanged:) name:MPMoviePlayerLoadStateDidChangeNotification object:controller.moviePlayer];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(moviePlaybackStateChanged:) name:MPMoviePlayerPlaybackStateDidChangeNotification object:controller.moviePlayer];
