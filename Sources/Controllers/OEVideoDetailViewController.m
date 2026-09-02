@@ -807,7 +807,7 @@ static const CGFloat kOverlayAutoHideDelay = 5.0;
     // Remove old observers before swapping content URL.
     MPMoviePlayerController *player = self.activePlayerController.moviePlayer;
     [self removePlayerObserversForPlayer:player];
-    [self cleanupSubtitleTimer];
+    [self clearSubtitleTimer];
 
     // Set the new content URL and restart.
     [player setContentURL:url];
