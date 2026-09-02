@@ -73,10 +73,11 @@ static const CGFloat kCloseButtonSize = 36.0;
     _sheetView.clipsToBounds = YES;
     [self addSubview:_sheetView];
 
-    _closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    _closeButton = [UIButton buttonWithType:UIButtonTypeCustom];
     [_closeButton setTitle:@"✕" forState:UIControlStateNormal];
     _closeButton.titleLabel.font = [UIFont boldSystemFontOfSize:18];
-    _closeButton.tintColor = [OETheme secondaryTextColor];
+    _closeButton.backgroundColor = [UIColor clearColor];
+    [_closeButton setTitleColor:[OETheme secondaryTextColor] forState:UIControlStateNormal];
     [_closeButton addTarget:self action:@selector(dismiss) forControlEvents:UIControlEventTouchUpInside];
     [_sheetView addSubview:_closeButton];
 
@@ -281,7 +282,7 @@ static const CGFloat kCloseButtonSize = 36.0;
     _sheetView.layer.borderColor = [OETheme separatorColor].CGColor;
     _audioHeaderLabel.textColor = [OETheme accentColor];
     _subtitleHeaderLabel.textColor = [OETheme accentColor];
-    _closeButton.tintColor = [OETheme secondaryTextColor];
+    _closeButton.backgroundColor = [UIColor clearColor];
     [_closeButton setTitleColor:[OETheme secondaryTextColor] forState:UIControlStateNormal];
 }
 

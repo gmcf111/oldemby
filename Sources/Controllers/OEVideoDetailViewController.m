@@ -236,15 +236,15 @@ static const CGFloat kOverlayAutoHideDelay = 5.0;
                 // parser can handle. "sub" alone is ambiguous (can be image-
                 // based SubViewer or text MicroDVD), so only include "subrip"
                 // and "subviewer" which are text-based.
-                BOOL knownTextCodec = [codec containsString:@"srt"] ||
-                                      [codec containsString:@"vtt"] ||
-                                      [codec containsString:@"ass"] ||
-                                      [codec containsString:@"ssa"] ||
-                                      [codec containsString:@"subrip"] ||
-                                      [codec containsString:@"subviewer"] ||
-                                      [codec containsString:@"webvtt"] ||
-                                      [codec containsString:@"lrc"] ||
-                                      [codec containsString:@"microdvd"] ||
+                BOOL knownTextCodec = ([codec rangeOfString:@"srt"].location != NSNotFound) ||
+                                      ([codec rangeOfString:@"vtt"].location != NSNotFound) ||
+                                      ([codec rangeOfString:@"ass"].location != NSNotFound) ||
+                                      ([codec rangeOfString:@"ssa"].location != NSNotFound) ||
+                                      ([codec rangeOfString:@"subrip"].location != NSNotFound) ||
+                                      ([codec rangeOfString:@"subviewer"].location != NSNotFound) ||
+                                      ([codec rangeOfString:@"webvtt"].location != NSNotFound) ||
+                                      ([codec rangeOfString:@"lrc"].location != NSNotFound) ||
+                                      ([codec rangeOfString:@"microdvd"].location != NSNotFound) ||
                                       [codec isEqualToString:@"sub"];
                 if (!isText && !knownTextCodec) continue;
                 info.mediaSourceId = firstMediaSourceId;

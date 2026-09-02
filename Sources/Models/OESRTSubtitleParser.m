@@ -78,7 +78,7 @@ static NSTimeInterval parseLRCTimeTag(NSString *tag) {
         }
 
         NSString *timeLine = [lines[i] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (![timeLine containsString:@"-->"]) { i++; continue; }
+        if ([timeLine rangeOfString:@"-->"].location == NSNotFound) { i++; continue; }
         i++;
 
         NSMutableString *cueText = [NSMutableString string];
@@ -474,9 +474,9 @@ static NSString *stripASSOverrides(NSString *text) {
     }
 
     // Detect ASS/SSA: contains "[Script Info]" or "[Events]" or "Dialogue:"
-    if ([text containsString:@"[Script Info]"] || [text containsString:@"[Events]"] ||
-        [text containsString:@"[V4+ Styles]"] || [text containsString:@"[V4 Styles+]"] ||
-        [text containsString:@"Dialogue:"]) {
+    if ([text rangeOfString:@"[Script Info]"].location != NSNotFound || [text rangeOfString:@"[Events]"].location != NSNotFound ||
+        [text rangeOfString:@"[V4+ Styles]"].location != NSNotFound || [text rangeOfString:@"[V4 Styles+]"].location != NSNotFound ||
+        [text rangeOfString:@"Dialogue:"].location != NSNotFound) {
         NSArray *cues = [self parseASS:text];
         if (cues.count) return cues;
     }
@@ -515,7 +515,7 @@ static NSString *stripASSOverrides(NSString *text) {
         checked++;
         if (checked > 10) break;
         // Must start with { and contain }{ pattern.
-        if ([t hasPrefix:@"{"] && [t containsString:@"}{"]) {
+        if ([t hasPrefix:@"{"] && [t rangeOfString:@"}{"].location != NSNotFound) {
             curlyCount++;
         }
     }
@@ -528,7 +528,7 @@ static NSString *stripASSOverrides(NSString *text) {
             NSRange firstClose = [t rangeOfString:@"}"];
             if (firstClose.location == NSNotFound) break;
             NSString *firstVal = [t substringWithRange:NSMakeRange(1, firstClose.location - 1)];
-            if (firstVal.length > 0 && [firstVal containsString:@":"]) {
+            if (firstVal.length > 0 && [firstVal rangeOfString:@":"].location != NSNotFound) {
                 // SubViewer 1.x (timestamps with colons)
                 NSArray *cues = [self parseSubViewer:text];
                 if (cues.count) return cues;
@@ -545,8 +545,8 @@ static NSString *stripASSOverrides(NSString *text) {
     }
 
     // Detect SubViewer 2.x by header markers.
-    if ([text containsString:@"[INFINITE SYNC]"] || [text containsString:@"[SUBTITLE"] ||
-        [text containsString:@"[COLF]"] || [text containsString:@"[BODY]"]) {
+    if ([text rangeOfString:@"[INFINITE SYNC]"].location != NSNotFound || [text rangeOfString:@"[SUBTITLE"].location != NSNotFound ||
+        [text rangeOfString:@"[COLF]"].location != NSNotFound || [text rangeOfString:@"[BODY]"].location != NSNotFound) {
         // SubViewer 2.x uses SRT-style time lines; the SRT parser handles it.
         // SubViewer 1.x uses curly-brace timestamps; try the 1.x parser first.
         NSArray *cues = [self parseSubViewer:text];
