@@ -48,6 +48,10 @@ static NSTimeInterval parseLRCTimeTag(NSString *tag) {
     return m * 60.0 + sec;
 }
 
+#pragma mark - OESubtitleParser
+
+@implementation OESubtitleParser
+
 #pragma mark - SRT Parser
 
 + (NSArray *)parseSRT:(NSString *)srtText {
