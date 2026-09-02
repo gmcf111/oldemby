@@ -377,22 +377,52 @@ static const CGFloat kCastStripHeight = 132.0;
 - (void)presentPlayerForURL:(NSURL *)url isDirectStream:(BOOL)isDirectStream {
     if (!url || self.activePlayerController || self.dismissingPlayer) return;
     self.activeStreamURLString = url.absoluteString;
-    MPMoviePlayerViewController *controller = [[MPMoviePlayerViewController alloc] initWithContentURL:url];
-    if (!controller || !controller.moviePlayer) { [self showPlaybackError:@"无法初始化系统播放器" detail:[NSString stringWithFormat:@"地址：%@", url.absoluteString]]; return; }
-    self.activePlayerController = controller;
-    self.playerBecamePlayable = NO;
-    self.dismissingPlayer = NO;
-    // Direct stream URLs (Static=true, no HLS) play better as File sources:
-    // MPMovieSourceTypeStreaming forces HLS-style buffering heuristics
-    // that stall progressive HTTP downloads on iOS 6.
-    controller.moviePlayer.movieSourceType = isDirectStream ? MPMovieSourceTypeFile : MPMovieSourceTypeStreaming;
-    controller.moviePlayer.shouldAutoplay = YES;
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieLoadStateChanged:) name:MPMoviePlayerLoadStateDidChangeNotification object:controller.moviePlayer];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(moviePlaybackStateChanged:) name:MPMoviePlayerPlaybackStateDidChangeNotification object:controller.moviePlayer];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieFinished:) name:MPMoviePlayerPlaybackDidFinishNotification object:controller.moviePlayer];
-    self.statusLabel.text = @"正在缓冲视频…";
-    [controller.moviePlayer prepareToPlay];
-    [self presentMoviePlayerViewControllerAnimated:controller];
+    // Guard the entire setup/present path.  On iOS 6,
+    // MPMoviePlayerController can throw an NSInvalidArgumentException
+    // from internal delayed-perform callbacks when the source type or
+    // URL is not directly playable (e.g. a direct-stream HTTP URL whose
+    // underlying codec is H.265/HEVC despite an mp4 container).  Without
+    // this guard the exception propagates through __NSFireDelayedPerform
+    // and aborts the process.
+    @try {
+        MPMoviePlayerViewController *controller = [[MPMoviePlayerViewController alloc] initWithContentURL:url];
+        if (!controller || !controller.moviePlayer) {
+            [self showPlaybackError:@"无法初始化系统播放器" detail:[NSString stringWithFormat:@"地址：%@", url.absoluteString]];
+            return;
+        }
+        self.activePlayerController = controller;
+        self.playerBecamePlayable = NO;
+        self.dismissingPlayer = NO;
+        // Direct stream URLs (Static=true, no HLS) play better as File sources:
+        // MPMovieSourceTypeStreaming forces HLS-style buffering heuristics
+        // that stall progressive HTTP downloads on iOS 6.
+        controller.moviePlayer.movieSourceType = isDirectStream ? MPMovieSourceTypeFile : MPMovieSourceTypeStreaming;
+        controller.moviePlayer.shouldAutoplay = YES;
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieLoadStateChanged:) name:MPMoviePlayerLoadStateDidChangeNotification object:controller.moviePlayer];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(moviePlaybackStateChanged:) name:MPMoviePlayerPlaybackStateDidChangeNotification object:controller.moviePlayer];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(movieFinished:) name:MPMoviePlayerPlaybackDidFinishNotification object:controller.moviePlayer];
+        self.statusLabel.text = @"正在缓冲视频…";
+        // Present the controller BEFORE calling prepareToPlay.  On iOS 6,
+        // MPMoviePlayerController needs its view hierarchy attached to a
+        // window to initialise the CoreMedia pipeline; calling
+        // prepareToPlay first can leave internal state observers dangling
+        // and trigger a delayed-perform crash when the presentation
+        // animation finally starts.
+        [self presentMoviePlayerViewControllerAnimated:controller];
+        @try {
+            [controller.moviePlayer prepareToPlay];
+        } @catch (NSException *inner) {
+            NSLog(@"[OldEmby] prepareToPlay exception: %@", inner);
+        }
+    } @catch (NSException *e) {
+        NSLog(@"[OldEmby] presentPlayerForURL exception: %@", e);
+        [self.activePlayerController.moviePlayer stop];
+        [self removePlayerObserversForPlayer:self.activePlayerController.moviePlayer];
+        self.activePlayerController = nil;
+        self.dismissingPlayer = NO;
+        NSString *msg = [NSString stringWithFormat:@"系统播放器无法打开此视频流：%@", e.reason ?: e.name ?: @"未知异常"];
+        [self showPlaybackError:msg detail:[self playbackFailureDetail]];
+    }
 }
 
 - (void)movieLoadStateChanged:(NSNotification *)notification {
@@ -460,8 +490,20 @@ static const CGFloat kCastStripHeight = 132.0;
     // that commit messaging a freed object -> EXC_BAD_ACCESS on the main run
     // loop observer. Clearing the property on the next tick avoids that.
     if (controller) {
+        __weak typeof(self) weakSelf = self;
         dispatch_async(dispatch_get_main_queue(), ^{
-            self.activePlayerController = nil;
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf) return;
+            // Stop the player once more before releasing: iOS 6 schedules
+            // internal teardown via performSelector:afterDelay:, and if the
+            // controller is released while those callbacks are still
+            // queued the delayed-perform dispatch lands on freed memory.
+            @try {
+                [strongSelf.activePlayerController.moviePlayer stop];
+            } @catch (NSException *e) {
+                NSLog(@"[OldEmby] deferred stop exception: %@", e);
+            }
+            strongSelf.activePlayerController = nil;
         });
     } else {
         self.activePlayerController = nil;
@@ -475,8 +517,21 @@ static const CGFloat kCastStripHeight = 132.0;
     self.pendingFinishReason = [notification.userInfo[MPMoviePlayerPlaybackDidFinishReasonUserInfoKey] integerValue];
     self.pendingPlaybackError = notification.userInfo[@"error"];
     [self removePlayerObserversForPlayer:player];
-    [player stop];
-    [self dismissMoviePlayerViewControllerAnimated];
+    // Guard stop/dismiss in @try/@catch: MPMoviePlayerController on iOS 6
+    // can throw from its teardown delayed-perform when the stream was
+    // never playable (e.g. direct stream of an unsupported codec).
+    @try { [player stop]; } @catch (NSException *stopEx) {
+        NSLog(@"[OldEmby] player stop exception: %@", stopEx);
+    }
+    @try {
+        [self dismissMoviePlayerViewControllerAnimated];
+    } @catch (NSException *dismissEx) {
+        NSLog(@"[OldEmby] dismissMoviePlayer exception: %@", dismissEx);
+        // If the modal dismiss itself threw, finalise cleanup directly so
+        // the controller is not left in a half-dismissed state.
+        self.dismissingPlayer = NO;
+        self.activePlayerController = nil;
+    }
 }
 
 - (void)showPlaybackError:(NSString *)message {
@@ -520,8 +575,17 @@ static const CGFloat kCastStripHeight = 132.0;
 
 - (void)dealloc {
     ++self.playRequestGeneration;
-    [self removePlayerObserversForPlayer:self.activePlayerController.moviePlayer];
+    MPMoviePlayerController *moviePlayer = self.activePlayerController.moviePlayer;
+    [self removePlayerObserversForPlayer:moviePlayer];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // Stop the player synchronously before deallocation so that iOS 6's
+    // internal performSelector:afterDelay: teardown callbacks are cancelled
+    // rather than firing later on a freed object.
+    if (moviePlayer) {
+        @try { [moviePlayer stop]; } @catch (NSException *e) {
+            NSLog(@"[OldEmby] dealloc stop exception: %@", e);
+        }
+    }
     MPMoviePlayerViewController *controller = self.activePlayerController;
     // Same deferred-release rationale as finishDismissingPlayer: let iOS 6's
     // MPMoviePlayer teardown commit finish before the controller is

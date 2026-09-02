@@ -467,6 +467,42 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-3 userInfo:@{NSLocalizedDescriptionKey:msg}]);
             return;
         }
+        // Also check the video codec: even an mp4 container may hold a
+        // codec that iOS 6 MPMoviePlayer cannot decode (H.265/HEVC, VP9,
+        // AV1).  Playing such a file directly causes the system player to
+        // throw an NSInvalidArgumentException from a delayed-perform
+        // callback, which aborts the process.  Reject these early so the
+        // user is guided to the transcode button instead.
+        if (!isAudio) {
+            NSString *videoCodec = nil;
+            for (NSDictionary *candidate in sources) {
+                if (![candidate isKindOfClass:[NSDictionary class]]) continue;
+                NSArray *streams = candidate[@"MediaStreams"];
+                if (![streams isKindOfClass:[NSArray class]]) continue;
+                for (NSDictionary *stream in streams) {
+                    if (![stream isKindOfClass:[NSDictionary class]]) continue;
+                    NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
+                    if (![type isEqualToString:@"Video"]) continue;
+                    videoCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
+                    if (videoCodec.length) break;
+                }
+                if (videoCodec.length) break;
+            }
+            if (videoCodec.length) {
+                static NSArray *unsupportedCodecs = nil;
+                static dispatch_once_t onceTokenCodec;
+                dispatch_once(&onceTokenCodec, ^{
+                    unsupportedCodecs = @[@"hevc", @"h265", @"h.265", @"vp9", @"vp09", @"av1", @"av01", @"vvc", @"h266", @"h.266"];
+                });
+                for (NSString *bad in unsupportedCodecs) {
+                    if ([videoCodec isEqualToString:bad] || [videoCodec containsString:bad]) {
+                        NSString *msg = [NSString stringWithFormat:@"该视频使用 %@ 编码，iOS 6 系统播放器不支持直接播放此编码。请使用上方的转码播放按钮。", videoCodec.uppercaseString];
+                        if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
+                        return;
+                    }
+                }
+            }
+        }
         // If no DirectStreamUrl was provided, build the canonical stream
         // endpoint ourselves with Static=true (no transcoding).
         if (!url.length) {
