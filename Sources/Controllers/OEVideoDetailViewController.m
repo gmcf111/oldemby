@@ -41,6 +41,8 @@ static const CGFloat kCastStripHeight = 132.0;
 @property (nonatomic, strong) NSError *pendingPlaybackError;
 // Kept for diagnostics: shown (and copyable) in the failure sheet.
 @property (nonatomic, copy) NSString *activeStreamURLString;
+// Tracks whether the current playback attempt is direct stream (no transcode).
+@property (nonatomic, assign) BOOL currentPlaybackIsDirect;
 @end
 
 @implementation OEVideoDetailViewController
@@ -318,6 +320,7 @@ static const CGFloat kCastStripHeight = 132.0;
         if (self.activePlayerController || self.dismissingPlayer) return;
         NSLog(@"[OldEmby] video stream URL: %@", streamURL);
         BOOL isDirect = [streamURL rangeOfString:@"Static=true" options:NSCaseInsensitiveSearch].location != NSNotFound;
+        self.currentPlaybackIsDirect = isDirect;
         [self presentPlayerForURL:url isDirectStream:isDirect];
     };
     fetchBlock(client, itemId, handler);
@@ -456,9 +459,13 @@ static const CGFloat kCastStripHeight = 132.0;
     }
     if (self.item.itemId.length) [context appendFormat:@"\nItemId：%@", self.item.itemId];
     OETranscodeSettings *settings = [OETranscodeSettings sharedSettings];
-    [context appendFormat:@"\n模式：%@", settings.directPlay ? @"直接播放" : @"转码"];
-    if (!settings.directPlay) {
-        [context appendFormat:@" %@ / %ld kbps", [settings resolutionString], (long)settings.maxVideoBitrate / 1000];
+    if (self.currentPlaybackIsDirect) {
+        [context appendString:@"\n模式：不转码直接播放"];
+    } else {
+        [context appendFormat:@"\n模式：%@", settings.directPlay ? @"直接播放" : @"转码"];
+        if (!settings.directPlay) {
+            [context appendFormat:@" %@ / %ld kbps", [settings resolutionString], (long)settings.maxVideoBitrate / 1000];
+        }
     }
     [OEErrorAlertView showWithTitle:@"播放失败" message:message ?: @"未知错误" detail:context];
 }

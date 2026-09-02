@@ -401,12 +401,11 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"Invalid PlaybackInfo response"}]);
             return;
         }
-        // Extract the MediaSourceId and the direct stream URL directly from
-        // the PlaybackInfo response.  We intentionally do NOT call
-        // streamURLFromPlaybackInfoResponse here because that class method
+        // Extract the MediaSourceId, container, and the direct stream URL
+        // directly from the PlaybackInfo response.  We intentionally do NOT
+        // call streamURLFromPlaybackInfoResponse here because that class method
         // reads the *global* OETranscodeSettings (which may be in transcode
-        // mode) to decide which URL to build, and would produce a
-        // transcode-oriented fallback URL instead of a direct-play URL.
+        // mode) to decide which URL to build.
         NSArray *sources = result[@"MediaSources"];
         if (![sources isKindOfClass:[NSArray class]] || sources.count == 0) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No media sources in PlaybackInfo"}]);
@@ -414,17 +413,60 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         }
         NSString *msId = nil;
         NSString *url = nil;
+        NSString *container = nil;
+        BOOL supportsDirectPlay = NO;
         for (NSDictionary *candidate in sources) {
             if (![candidate isKindOfClass:[NSDictionary class]]) continue;
-            // Prefer an explicit DirectStreamUrl from the server.
             id dsUrl = candidate[@"DirectStreamUrl"];
             if ([dsUrl isKindOfClass:[NSString class]] && [dsUrl length]) {
                 url = dsUrl;
                 msId = [candidate[@"Id"] isKindOfClass:[NSString class]] ? candidate[@"Id"] : msId;
+                container = [candidate[@"Container"] isKindOfClass:[NSString class]] ? [candidate[@"Container"] lowercaseString] : nil;
+                supportsDirectPlay = [candidate[@"SupportsDirectPlay"] boolValue];
                 break;
             }
-            // Fallback: capture the first source Id for the manual URL.
             if (!msId) msId = [candidate[@"Id"] isKindOfClass:[NSString class]] ? candidate[@"Id"] : nil;
+            if (!container) container = [candidate[@"Container"] isKindOfClass:[NSString class]] ? [candidate[@"Container"] lowercaseString] : nil;
+        }
+        // Check if the container is one iOS 6 MPMoviePlayer can natively play.
+        // MKV, AVI, WMV, FLV etc. will crash or produce -11828 errors.  Only
+        // mp4, mov, m4v, ts (MPEG-TS) are safe for direct playback.
+        NSString *lowerURL = url ? [url lowercaseString] : @"";
+        BOOL containerSupported = NO;
+        if (container.length) {
+            static NSArray *supported = nil;
+            static dispatch_once_t onceToken;
+            dispatch_once(&onceToken, ^{ supported = @[@"mp4", @"mov", @"m4v", @"ts", @"mpeg", @"mpg"]; });
+            for (NSString *s in supported) {
+                if ([container containsString:s]) { containerSupported = YES; break; }
+            }
+        }
+        // Also check the URL file extension as a fallback.
+        if (!containerSupported) {
+            static NSArray *supportedExt = nil;
+            static dispatch_once_t onceToken2;
+            dispatch_once(&onceToken2, ^{ supportedExt = @[@".mp4", @".mov", @".m4v", @".ts", @".mpeg", @".mpg"]; });
+            for (NSString *ext in supportedExt) {
+                if ([lowerURL containsString:ext]) { containerSupported = YES; break; }
+            }
+        }
+        if (!containerSupported) {
+            NSString *fmtName = container.length ? container.uppercaseString : @"未知格式";
+            if (isAudio) {
+                // Audio: also check common audio containers
+                static NSArray *audioExt = nil;
+                static dispatch_once_t onceToken3;
+                dispatch_once(&onceToken3, ^{ audioExt = @[@".mp3", @".aac", @".m4a", @".wav", @".flac"]; });
+                for (NSString *ext in audioExt) {
+                    if ([lowerURL containsString:ext]) { containerSupported = YES; break; }
+                }
+            }
+        }
+        if (!containerSupported) {
+            NSString *fmtName = container.length ? container.uppercaseString : @"未知格式";
+            NSString *msg = [NSString stringWithFormat:@"该视频为 %@ 格式，iOS 6 系统播放器无法直接播放。请使用上方的转码播放按钮。", fmtName];
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-3 userInfo:@{NSLocalizedDescriptionKey:msg}]);
+            return;
         }
         // If no DirectStreamUrl was provided, build the canonical stream
         // endpoint ourselves with Static=true (no transcoding).
