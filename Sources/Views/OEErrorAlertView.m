@@ -13,11 +13,11 @@ static const CGFloat kAlertDetailMaxHeight = 200.0;
 @property (nonatomic, strong) UILabel *titleLabel;
 @property (nonatomic, strong) UILabel *messageLabel;
 @property (nonatomic, strong) UITextView *detailView;
-@property (nonatomic, strong) UIButton *copyButton;
+@property (nonatomic, strong) UIButton *pasteButton;
 @property (nonatomic, strong) UIButton *closeButton;
 @property (nonatomic, strong) UIView *separatorTop;
 @property (nonatomic, strong) UIView *separatorMiddle;
-@property (nonatomic, copy) NSString *copyPayload;
+@property (nonatomic, copy) NSString *pasteboardPayload;
 // A presented sheet retains itself until dismissed: the caller is often a
 // controller that is being torn down by the same failure.
 @property (nonatomic, strong) OEErrorAlertView *selfRetain;
@@ -68,7 +68,7 @@ static const CGFloat kAlertDetailMaxHeight = 200.0;
         if (payload.length) [payload appendString:@"\n\n"];
         [payload appendString:detail];
     }
-    _copyPayload = [payload copy];
+    _pasteboardPayload = [payload copy];
 
     self.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.55];
 
@@ -122,12 +122,12 @@ static const CGFloat kAlertDetailMaxHeight = 200.0;
     _separatorMiddle.backgroundColor = [OETheme separatorColor];
     [_panel addSubview:_separatorMiddle];
 
-    _copyButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    _copyButton.titleLabel.font = [UIFont systemFontOfSize:16];
-    [_copyButton setTitle:@"复制" forState:UIControlStateNormal];
-    [_copyButton setTitleColor:[OETheme accentColor] forState:UIControlStateNormal];
-    [_copyButton addTarget:self action:@selector(copyTapped) forControlEvents:UIControlEventTouchUpInside];
-    [_panel addSubview:_copyButton];
+    _pasteButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    _pasteButton.titleLabel.font = [UIFont systemFontOfSize:16];
+    [_pasteButton setTitle:@"复制" forState:UIControlStateNormal];
+    [_pasteButton setTitleColor:[OETheme accentColor] forState:UIControlStateNormal];
+    [_pasteButton addTarget:self action:@selector(copyTapped) forControlEvents:UIControlEventTouchUpInside];
+    [_panel addSubview:_pasteButton];
 
     _closeButton = [UIButton buttonWithType:UIButtonTypeCustom];
     _closeButton.titleLabel.font = [UIFont boldSystemFontOfSize:16];
@@ -174,7 +174,7 @@ static const CGFloat kAlertDetailMaxHeight = 200.0;
     y += 0.5;
 
     CGFloat halfWidth = floor(panelWidth / 2.0);
-    self.copyButton.frame = CGRectMake(0, y, halfWidth, kAlertButtonHeight);
+    self.pasteButton.frame = CGRectMake(0, y, halfWidth, kAlertButtonHeight);
     self.separatorMiddle.frame = CGRectMake(halfWidth, y, 0.5, kAlertButtonHeight);
     self.closeButton.frame = CGRectMake(halfWidth, y, panelWidth - halfWidth, kAlertButtonHeight);
     y += kAlertButtonHeight;
@@ -195,11 +195,11 @@ static const CGFloat kAlertDetailMaxHeight = 200.0;
 }
 
 - (void)copyTapped {
-    [UIPasteboard generalPasteboard].string = self.copyPayload ?: @"";
-    [self.copyButton setTitle:@"已复制" forState:UIControlStateNormal];
+    [UIPasteboard generalPasteboard].string = self.pasteboardPayload ?: @"";
+    [self.pasteButton setTitle:@"已复制" forState:UIControlStateNormal];
     // Restore the label so a second copy is obviously available.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self.copyButton setTitle:@"复制" forState:UIControlStateNormal];
+        [self.pasteButton setTitle:@"复制" forState:UIControlStateNormal];
     });
 }
 
