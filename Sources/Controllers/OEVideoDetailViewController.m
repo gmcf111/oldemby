@@ -22,9 +22,21 @@ static const CGFloat kDetailCoverMinHeight = 90.0;
 static const CGFloat kDetailCoverMaxHeight = 200.0;
 static const CGFloat kCastStripHeight = 132.0;
 static const CGFloat kOverlayButtonSize = 32.0;
-static const CGFloat kOverlayBottomMargin = 48.0; // on the system control bar
-static const CGFloat kOverlaySideMargin = 6.0; // left/right edge margin
-static const CGFloat kOverlayAutoHideDelay = 3.5;
+static const CGFloat kOverlayBottomMargin = 48.0; // fallback: above the system control bar
+static const CGFloat kOverlaySideMargin = 6.0; // fallback: left/right edge margin
+static const CGFloat kOverlayButtonGap = 8.0; // gap between volume slider and buttons
+static const NSTimeInterval kControlSyncInterval = 0.2;
+
+// Full-screen container that only lets touches land on its subviews,
+// so taps elsewhere still reach the system player controls below.
+@interface OEOverlayPassthroughView : UIView
+@end
+@implementation OEOverlayPassthroughView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    return hit == self ? nil : hit;
+}
+@end
 
 @interface OEVideoDetailViewController () <OEStreamSelectionDelegate>
 @property (nonatomic, strong) OEEmbyItem *item;
@@ -63,7 +75,9 @@ static const CGFloat kOverlayAutoHideDelay = 3.5;
 @property (nonatomic, strong) UIButton *subtitleButton;
 @property (nonatomic, strong) UIView *overlayControlsView;
 @property (nonatomic, assign) BOOL overlayControlsVisible;
-@property (nonatomic, strong) NSTimer *overlayHideTimer;
+@property (nonatomic, strong) NSTimer *controlSyncTimer;
+@property (nonatomic, weak) UIView *systemVolumeView;
+@property (nonatomic, assign) CGRect lastVolumeFrame;
 @property (nonatomic, strong) OEStreamSelectionView *streamSelectionView;
 @end
 
@@ -619,10 +633,11 @@ static const CGFloat kOverlayAutoHideDelay = 3.5;
     UIView *playerView = self.activePlayerController.view;
     if (!playerView) return;
 
-    // Container for audio/subtitle buttons — shown/hidden in sync
-    // with the system control bar via tap gesture + auto-hide timer.
-    _overlayControlsView = [[UIView alloc] initWithFrame:CGRectZero];
+    // Container for audio/subtitle buttons — positioned around the system
+    // volume slider and shown/hidden in sync with the system control bar.
+    _overlayControlsView = [[OEOverlayPassthroughView alloc] initWithFrame:playerView.bounds];
     _overlayControlsView.backgroundColor = [UIColor clearColor];
+    _overlayControlsView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _overlayControlsView.userInteractionEnabled = YES;
     _overlayControlsView.alpha = 0.0;
     [playerView addSubview:_overlayControlsView];
@@ -650,81 +665,103 @@ static const CGFloat kOverlayAutoHideDelay = 3.5;
     [_overlayControlsView addSubview:_subtitleButton];
 
     // Add subtitle overlay on top of the player view
-    _subtitleOverlay = [[OESubtitleOverlayView alloc] initWithFrame:CGRectZero];
+    _subtitleOverlay = [[OESubtitleOverlayView alloc] initWithFrame:playerView.bounds];
+    _subtitleOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [playerView addSubview:_subtitleOverlay];
 
-    // Tap the video to toggle the overlay buttons, mirroring how the
-    // system control bar appears/disappears on user interaction.
-    UITapGestureRecognizer *tapGesture = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleOverlayControls)];
-    tapGesture.cancelsTouchesInView = NO;
-    [playerView addGestureRecognizer:tapGesture];
-
-    [self layoutOverlayControls];
-    [self showOverlayControls];
+    // Poll the system control bar (via its volume slider) so our buttons
+    // track its position and appear/disappear together with it.
+    _lastVolumeFrame = CGRectZero;
+    [self.controlSyncTimer invalidate];
+    self.controlSyncTimer = [NSTimer scheduledTimerWithTimeInterval:kControlSyncInterval
+                                                             target:self
+                                                           selector:@selector(syncOverlayWithSystemControls)
+                                                           userInfo:nil
+                                                            repeats:YES];
+    [self syncOverlayWithSystemControls];
 }
 
-- (void)layoutOverlayControls {
-    UIView *playerView = self.activePlayerController.view;
-    if (!playerView) return;
-    CGFloat w = playerView.bounds.size.width;
-    CGFloat h = playerView.bounds.size.height;
-    if (w < 1 || h < 1) return;
-
-    // Audio button on the left edge, subtitle button on the right edge,
-    // both aligned vertically with the system volume/control bar.
-    CGFloat btnSize = kOverlayButtonSize;
-    CGFloat y = h - btnSize - kOverlayBottomMargin;
-    _overlayControlsView.frame = CGRectMake(0, y, w, btnSize);
-    _audioButton.frame = CGRectMake(kOverlaySideMargin, 0, btnSize, btnSize);
-    CGFloat subX = w - btnSize - kOverlaySideMargin;
-    _subtitleButton.frame = CGRectMake(subX, 0, btnSize, btnSize);
-    _subtitleOverlay.frame = CGRectMake(0, 0, w, h);
+- (UIView *)findVolumeControlInView:(UIView *)view {
+    for (UIView *sub in view.subviews) {
+        NSString *className = NSStringFromClass([sub class]);
+        if ([className rangeOfString:@"Volume" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            return sub;
+        }
+        UIView *found = [self findVolumeControlInView:sub];
+        if (found) return found;
+    }
+    return nil;
 }
 
-- (void)showOverlayControls {
-    _overlayControlsVisible = YES;
-    [UIView beginAnimations:nil context:nil];
-    [UIView setAnimationDuration:0.25];
-    _overlayControlsView.alpha = 1.0;
-    [UIView commitAnimations];
-    [self resetOverlayHideTimer];
-}
-
-- (void)hideOverlayControls {
-    _overlayControlsVisible = NO;
-    [UIView beginAnimations:nil context:nil];
-    [UIView setAnimationDuration:0.3];
-    _overlayControlsView.alpha = 0.0;
-    [UIView commitAnimations];
-    [self.overlayHideTimer invalidate];
-    self.overlayHideTimer = nil;
-}
-
-- (void)toggleOverlayControls {
-    if (_overlayControlsVisible) {
-        [self hideOverlayControls];
-    } else {
-        [self showOverlayControls];
+- (void)syncOverlayWithSystemControls {
+    if (!_overlayControlsView) return;
+    UIView *volumeView = _systemVolumeView;
+    if (!volumeView || !volumeView.window) {
+        volumeView = [self findVolumeControlInView:_overlayControlsView.superview];
+        _systemVolumeView = volumeView;
+    }
+    CGRect volumeFrame = CGRectZero;
+    if (volumeView) {
+        volumeFrame = [volumeView convertRect:volumeView.bounds toView:_overlayControlsView];
+    }
+    if (!CGRectEqualToRect(volumeFrame, _lastVolumeFrame)) {
+        _lastVolumeFrame = volumeFrame;
+        [self layoutOverlayControls];
+    }
+    BOOL visible = [self systemControlsVisible:volumeView];
+    if (visible != _overlayControlsVisible) {
+        _overlayControlsVisible = visible;
+        [UIView beginAnimations:nil context:nil];
+        [UIView setAnimationDuration:0.25];
+        _overlayControlsView.alpha = visible ? 1.0 : 0.0;
+        [UIView commitAnimations];
     }
 }
 
-- (void)resetOverlayHideTimer {
-    [self.overlayHideTimer invalidate];
-    self.overlayHideTimer = [NSTimer scheduledTimerWithTimeInterval:kOverlayAutoHideDelay
-                                                              target:self
-                                                            selector:@selector(hideOverlayControls)
-                                                            userInfo:nil
-                                                             repeats:NO];
+// The system control bar fades as a whole, so the volume slider is visible
+// only if neither it nor any ancestor up to the player view is hidden/faded.
+// If the volume slider cannot be found at all, keep the buttons visible so
+// they stay accessible in the fallback layout.
+- (BOOL)systemControlsVisible:(UIView *)volumeView {
+    if (!volumeView) return YES;
+    UIView *playerView = _overlayControlsView.superview;
+    for (UIView *v = volumeView; v && v != playerView; v = v.superview) {
+        if (v.hidden || v.alpha < 0.05) return NO;
+    }
+    return YES;
+}
+
+- (void)layoutOverlayControls {
+    if (!_overlayControlsView) return;
+    CGFloat w = _overlayControlsView.bounds.size.width;
+    CGFloat h = _overlayControlsView.bounds.size.height;
+    if (w < 1 || h < 1) return;
+
+    CGFloat btnSize = kOverlayButtonSize;
+    if (_systemVolumeView && !CGRectIsEmpty(_lastVolumeFrame)) {
+        // Audio button on the left side of the volume slider, subtitle
+        // button on the right side, both sitting on the system control bar.
+        CGFloat y = CGRectGetMidY(_lastVolumeFrame) - btnSize / 2.0;
+        CGFloat audioX = CGRectGetMinX(_lastVolumeFrame) - kOverlayButtonGap - btnSize;
+        audioX = MAX(kOverlaySideMargin, audioX);
+        _audioButton.frame = CGRectMake(audioX, y, btnSize, btnSize);
+        CGFloat subX = CGRectGetMaxX(_lastVolumeFrame) + kOverlayButtonGap;
+        subX = MIN(w - btnSize - kOverlaySideMargin, subX);
+        _subtitleButton.frame = CGRectMake(subX, y, btnSize, btnSize);
+    } else {
+        // System volume slider not found yet: fall back to the screen edges.
+        CGFloat y = h - btnSize - kOverlayBottomMargin;
+        _audioButton.frame = CGRectMake(kOverlaySideMargin, y, btnSize, btnSize);
+        _subtitleButton.frame = CGRectMake(w - btnSize - kOverlaySideMargin, y, btnSize, btnSize);
+    }
 }
 
 - (void)audioButtonTapped {
     [self showStreamSelectionForAudio:YES];
-    [self resetOverlayHideTimer];
 }
 
 - (void)subtitleButtonTapped {
     [self showStreamSelectionForAudio:NO];
-    [self resetOverlayHideTimer];
 }
 
 #pragma mark - Stream Selection
@@ -947,8 +984,9 @@ static const CGFloat kOverlayAutoHideDelay = 3.5;
 
 - (void)cleanupOverlayAndSubtitles {
     [self clearSubtitles];
-    [self.overlayHideTimer invalidate];
-    self.overlayHideTimer = nil;
+    [self.controlSyncTimer invalidate];
+    self.controlSyncTimer = nil;
+    _systemVolumeView = nil;
     if (_streamSelectionView) {
         [_streamSelectionView dismiss];
         _streamSelectionView = nil;
