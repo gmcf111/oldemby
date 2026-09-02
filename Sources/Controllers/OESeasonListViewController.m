@@ -32,6 +32,7 @@ static const CGFloat kCastStripHeight = 132.0;
 @property (nonatomic, strong) NSArray *seasons;
 @property (nonatomic, assign) NSUInteger loadGeneration;
 @property (nonatomic, assign) BOOL castsLoaded;
+@property (nonatomic, assign) BOOL didAutoPush;
 @property (nonatomic, assign) BOOL isRelayoutingHeader;
 @end
 
@@ -269,6 +270,11 @@ static const CGFloat kCastStripHeight = 132.0;
         }
         self.seasons = seasons;
         [self.tableView reloadData];
+        if (seasons.count == 1 && !self.didAutoPush) {
+            self.didAutoPush = YES;
+            [self pushEpisodeListForSeason:seasons[0] animated:NO];
+            return;
+        }
         [[self.tableView viewWithTag:995] removeFromSuperview];
         if (!seasons.count) {
             UILabel *empty = [[UILabel alloc] initWithFrame:CGRectMake(0, 100, self.view.bounds.size.width, 40)];

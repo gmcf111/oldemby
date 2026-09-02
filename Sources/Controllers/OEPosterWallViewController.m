@@ -6,7 +6,6 @@
 #import "Models/OEEmbyItem.h"
 #import "Controllers/OEVideoDetailViewController.h"
 #import "Controllers/OESeasonListViewController.h"
-#import "Controllers/OEEpisodeListViewController.h"
 #import "Constants.h"
 #import <math.h>
 
@@ -20,7 +19,6 @@
 @property (nonatomic, assign) BOOL loadingPage;
 @property (nonatomic, assign) BOOL hasMorePages;
 @property (nonatomic, assign) NSInteger lastColumnCount;
-@property (nonatomic, assign) BOOL navigatingToSeries;
 @end
 
 @implementation OEPosterWallViewController
@@ -160,29 +158,8 @@
     if (index < 0 || index >= (NSInteger)self.items.count) return;
     OEEmbyItem *item = self.items[index];
     if (item.itemType == OEEmbyItemTypeSeries) {
-        if (self.navigatingToSeries) return;
-        self.navigatingToSeries = YES;
-        // Fetch seasons first: if the series has exactly one season we push
-        // the episode list directly, skipping the intermediate season page so
-        // the user only needs one back press to return to the poster wall.
-        [[OEEmbyAPIClient sharedClient] fetchSeasonsForSeries:item.itemId completion:^(id result, NSError *error) {
-            self.navigatingToSeries = NO;
-            if (error) {
-                [OEErrorAlertView showWithTitle:@"加载失败" error:error];
-                return;
-            }
-            NSArray *seasons = [result isKindOfClass:[NSArray class]] ? result : @[];
-            for (OEEmbyItem *season in seasons) {
-                if (!season.seriesId.length) season.seriesId = item.itemId;
-            }
-            if (seasons.count == 1) {
-                OEEpisodeListViewController *vc = [[OEEpisodeListViewController alloc] initWithSeries:item season:seasons[0]];
-                [self.navigationController pushViewController:vc animated:YES];
-            } else {
-                OESeasonListViewController *vc = [[OESeasonListViewController alloc] initWithSeries:item];
-                [self.navigationController pushViewController:vc animated:YES];
-            }
-        }];
+        // Series drill down through the season list first, like Emby web.
+        [self.navigationController pushViewController:[[OESeasonListViewController alloc] initWithSeries:item] animated:YES];
     } else {
         [self.navigationController pushViewController:[[OEVideoDetailViewController alloc] initWithItem:item] animated:YES];
     }
