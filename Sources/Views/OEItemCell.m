@@ -80,11 +80,12 @@
     CGFloat w = self.contentView.bounds.size.width;
     if (_episodeLayout) {
         CGFloat imageHeight = self.contentView.bounds.size.height;
-        // Season/episode rows: always use the 2:3 poster aspect ratio so every
-        // season cover is the same size regardless of the server-reported
-        // PrimaryImageAspectRatio (which can vary per season and cause
-        // mismatched cover widths across seasons of the same series).
-        CGFloat aspectRatio = (2.0 / 3.0);
+        // Episode thumbnails are landscape (16:9); use the real aspect
+        // ratio when available, falling back to 16:9.
+        CGFloat aspectRatio = self.primaryImageAspectRatio > 0 ? self.primaryImageAspectRatio : 1.78;
+        // Clamp to a reasonable landscape range so very wide or very
+        // tall images don't break the row.
+        aspectRatio = MAX(1.2, MIN(aspectRatio, 2.8));
         CGFloat imageWidth = MAX(1.0, MIN(imageHeight * aspectRatio, w * 0.55));
         _coverView.frame = CGRectMake(0, 0, imageWidth, imageHeight);
         CGFloat textX = imageWidth + 10;
@@ -162,8 +163,9 @@
     self.detailLabel.text = [NSString stringWithFormat:@"%@  %@", item.type ?: @"", [item displayDuration]];
     // Library rows request a small banner thumbnail matching the quarter-size
     // left cover; compact/episode rows keep their original small thumbnails.
-    NSInteger imageWidth = self.episodeLayout ? 280 : (self.compactLayout ? 128 : 320);
-    NSInteger imageHeight = self.episodeLayout ? 560 : (self.compactLayout ? 96 : 180);
+    // Episode rows request landscape thumbnails (16:9) instead of portrait.
+    NSInteger imageWidth = self.episodeLayout ? 320 : (self.compactLayout ? 128 : 320);
+    NSInteger imageHeight = self.episodeLayout ? 180 : (self.compactLayout ? 96 : 180);
     NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:item width:imageWidth height:imageHeight];
     [[OEImageCache sharedCache] loadImageFromURL:url placeholder:nil completion:^(UIImage *image) {
         if ([self.representedItemId isEqualToString:item.itemId]) self.coverView.image = image;

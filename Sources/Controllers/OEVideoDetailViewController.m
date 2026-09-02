@@ -18,12 +18,12 @@ static const CGFloat kDetailSidePadding = 12.0;
 static const CGFloat kDetailCoverWidthFraction = 0.42;
 static const CGFloat kDetailCoverMaxWidth = 200.0;
 static const CGFloat kDetailCoverMinWidth = 120.0;
-static const CGFloat kDetailCoverMinHeight = 180.0;
-static const CGFloat kDetailCoverMaxHeight = 300.0;
+static const CGFloat kDetailCoverMinHeight = 90.0;
+static const CGFloat kDetailCoverMaxHeight = 200.0;
 static const CGFloat kCastStripHeight = 132.0;
-static const CGFloat kOverlayButtonSize = 40.0;
-static const CGFloat kOverlayButtonSpacing = 12.0;
-static const CGFloat kOverlayBottomMargin = 52.0; // below system volume bar
+static const CGFloat kOverlayButtonSize = 36.0;
+static const CGFloat kOverlayBottomMargin = 10.0; // aligned with system control bar
+static const CGFloat kOverlaySideMargin = 8.0; // left/right edge margin
 
 @interface OEVideoDetailViewController () <OEStreamSelectionDelegate>
 @property (nonatomic, strong) OEEmbyItem *item;
@@ -95,7 +95,7 @@ static const CGFloat kOverlayBottomMargin = 52.0; // below system volume bar
     [_scrollView addSubview:_contentView];
 
     self.cover = [[UIImageView alloc] initWithFrame:CGRectZero];
-    self.cover.contentMode = UIViewContentModeScaleAspectFill;
+    self.cover.contentMode = UIViewContentModeScaleAspectFit;
     self.cover.clipsToBounds = YES;
     self.cover.layer.borderWidth = 1.0;
     [self.contentView addSubview:self.cover];
@@ -166,7 +166,7 @@ static const CGFloat kOverlayBottomMargin = 52.0; // below system volume bar
 
     [self applyTheme];
 
-    NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:self.item width:400 height:600];
+    NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:self.item width:400 height:225];
     [[OEImageCache sharedCache] loadImageFromURL:url placeholder:nil completion:^(UIImage *image) { self.cover.image = image; }];
 
     [self loadCasts];
@@ -324,8 +324,10 @@ static const CGFloat kOverlayBottomMargin = 52.0; // below system volume bar
     CGFloat margin = kDetailSidePadding;
     CGFloat coverWidth = w * kDetailCoverWidthFraction;
     coverWidth = MAX(kDetailCoverMinWidth, MIN(coverWidth, kDetailCoverMaxWidth));
-    CGFloat aspectRatio = self.item.primaryImageAspectRatio > 0 ? self.item.primaryImageAspectRatio : (2.0 / 3.0);
-    CGFloat coverHeight = coverWidth / (aspectRatio > 0 ? aspectRatio : (2.0 / 3.0));
+    // Default to 16:9 landscape for episode thumbnails; use the real
+    // aspect ratio from the server when available.
+    CGFloat aspectRatio = self.item.primaryImageAspectRatio > 0 ? self.item.primaryImageAspectRatio : 1.78;
+    CGFloat coverHeight = coverWidth / (aspectRatio > 0 ? aspectRatio : 1.78);
     coverHeight = MAX(kDetailCoverMinHeight, MIN(coverHeight, kDetailCoverMaxHeight));
     CGFloat topY = margin;
     self.cover.frame = CGRectMake(margin, topY, coverWidth, coverHeight);
@@ -662,14 +664,14 @@ static const CGFloat kOverlayBottomMargin = 52.0; // below system volume bar
     CGFloat h = playerView.bounds.size.height;
     if (w < 1 || h < 1) return;
 
-    // Place the two buttons at the bottom center, below the system
-    // volume bar and playback controls.
-    CGFloat totalW = 2 * kOverlayButtonSize + kOverlayButtonSpacing;
-    CGFloat startX = (w - totalW) / 2.0;
-    CGFloat y = h - kOverlayButtonSize - kOverlayBottomMargin;
-    _overlayControlsView.frame = CGRectMake(startX, y, totalW, kOverlayButtonSize);
-    _audioButton.frame = CGRectMake(0, 0, kOverlayButtonSize, kOverlayButtonSize);
-    _subtitleButton.frame = CGRectMake(kOverlayButtonSize + kOverlayButtonSpacing, 0, kOverlayButtonSize, kOverlayButtonSize);
+    // Audio button on the left edge, subtitle button on the right edge,
+    // both aligned vertically with the system volume/control bar.
+    CGFloat btnSize = kOverlayButtonSize;
+    CGFloat y = h - btnSize - kOverlayBottomMargin;
+    _overlayControlsView.frame = CGRectMake(0, y, w, btnSize);
+    _audioButton.frame = CGRectMake(kOverlaySideMargin, 0, btnSize, btnSize);
+    CGFloat subX = w - btnSize - kOverlaySideMargin;
+    _subtitleButton.frame = CGRectMake(subX, 0, btnSize, btnSize);
     _subtitleOverlay.frame = CGRectMake(0, 0, w, h);
 }
 
