@@ -272,7 +272,7 @@ static const CGFloat kCastStripHeight = 132.0;
         [self.tableView reloadData];
         if (seasons.count == 1 && !self.didAutoPush) {
             self.didAutoPush = YES;
-            [self pushEpisodeListForSeason:seasons[0] animated:NO];
+            [self replaceSelfWithEpisodeListForSeason:seasons[0]];
             return;
         }
         [[self.tableView viewWithTag:995] removeFromSuperview];
@@ -291,6 +291,17 @@ static const CGFloat kCastStripHeight = 132.0;
 - (void)pushEpisodeListForSeason:(OEEmbyItem *)season animated:(BOOL)animated {
     OEEpisodeListViewController *vc = [[OEEpisodeListViewController alloc] initWithSeries:self.series season:season];
     [self.navigationController pushViewController:vc animated:animated];
+}
+
+- (void)replaceSelfWithEpisodeListForSeason:(OEEmbyItem *)season {
+    OEEpisodeListViewController *vc = [[OEEpisodeListViewController alloc] initWithSeries:self.series season:season];
+    UINavigationController *nav = self.navigationController;
+    if (!nav) return;
+    NSMutableArray *stack = [nav.viewControllers mutableCopy];
+    NSUInteger myIndex = [stack indexOfObject:self];
+    if (myIndex == NSNotFound) return;
+    [stack replaceObjectAtIndex:myIndex withObject:vc];
+    [nav setViewControllers:stack animated:NO];
 }
 
 #pragma mark - Table
