@@ -12,4 +12,8 @@
 // Convenience: calculate the height needed for the given width.
 - (CGFloat)heightForWidth:(CGFloat)width;
 
+// Re-apply theme colors to all subviews.  Called by the containing view
+// controller when the theme changes (kNotificationThemeDidChange).
+- (void)applyTheme;
+
 @end
