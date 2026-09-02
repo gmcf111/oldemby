@@ -386,6 +386,54 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     }];
 }
 
+- (void)fetchDirectStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion {
+    // Build a PlaybackInfo body with a direct-play (no transcode) profile so
+    // the server returns the original file URL with Static=true.  This is
+    // independent of the global transcode setting in OETranscodeSettings.
+    OEServerConfig *c = [OEServerConfig sharedConfig];
+    OETranscodeSettings *direct = [OETranscodeSettings defaultSettings];
+    direct.directPlay = YES;
+    NSDictionary *body = [OETranscodeBuilder playbackInfoBodyForItemId:itemId userId:c.userId settings:direct isAudio:isAudio];
+    NSString *path = [NSString stringWithFormat:@"/Items/%@/PlaybackInfo", itemId];
+    [self POST:path jsonBody:body completion:^(id result, NSError *error) {
+        if (error) { if (completion) completion(nil, error); return; }
+        if (![result isKindOfClass:[NSDictionary class]]) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"Invalid PlaybackInfo response"}]);
+            return;
+        }
+        NSString *msId = nil;
+        NSString *url = [OETranscodeBuilder streamURLFromPlaybackInfoResponse:result itemId:itemId isAudio:isAudio host:[self baseURL] mediaSourceId:&msId];
+        if (!url) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No direct stream URL available for this item"}]);
+            return;
+        }
+        // Force Static=true so the server hands back the original file.
+        url = [url stringByReplacingOccurrencesOfString:@"Static=false" withString:@"Static=true"];
+        url = [url stringByReplacingOccurrencesOfString:@"static=false" withString:@"static=true"];
+        // Ensure the URL carries the api_key for direct file access.
+        NSString *token = [OEServerConfig sharedConfig].accessToken;
+        if (token.length && [url rangeOfString:@"api_key=" options:NSCaseInsensitiveSearch].location == NSNotFound) {
+            NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
+            url = [url stringByAppendingFormat:@"%@api_key=%@", sep, OEEncodeQueryComponent(token)];
+        }
+        NSString *finalURL = OEEscapeIllegalURLCharacters(url);
+        if (![NSURL URLWithString:finalURL]) {
+            CFStringRef recovered = CFURLCreateStringByAddingPercentEscapes(NULL,
+                (__bridge CFStringRef)url, NULL,
+                CFSTR(" \t\r\n\"<>\\^`{}[]|"), kCFStringEncodingUTF8);
+            NSString *recoveredURL = recovered ? [(__bridge NSString *)recovered copy] : nil;
+            if (recovered) CFRelease(recovered);
+            if (recoveredURL.length && [NSURL URLWithString:recoveredURL]) finalURL = recoveredURL;
+        }
+        NSLog(@"[OldEmby] direct stream URL for %@: %@", itemId, finalURL);
+        if (![NSURL URLWithString:finalURL]) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"直接播放地址无法解析：%@", url]}]);
+            return;
+        }
+        if (completion) completion(finalURL, nil);
+    }];
+}
+
 - (void)GETText:(NSString *)path completion:(OEAPICompletion)completion {
     NSURL *url = [self urlForPath:path params:nil];
     if (!url) {
@@ -508,12 +556,33 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Missing item ID"}]);
         return;
     }
-    // Emby: GET /Items/{Id}?Fields=People returns the item with a People array.
-    // Each person entry has Id, Name, Role, Type, PrimaryImageTag, PrimaryImageAspectRatio.
-    NSString *path = [NSString stringWithFormat:@"/Items/%@", itemId];
+    // Emby: GET /Users/{UserId}/Items/{Id}?Fields=People returns the item with
+    // a People array.  The user-scoped path is required because the bare
+    // /Items/{Id} endpoint on many Emby versions omits People (it only
+    // returns the raw item without user-context fields).
+    OEServerConfig *c = [OEServerConfig sharedConfig];
+    NSString *path = [NSString stringWithFormat:@"/Users/%@/Items/%@", c.userId ?: @"", itemId];
     NSDictionary *params = @{@"Fields": @"People"};
     [self GET:path params:params completion:^(id result, NSError *error) {
-        if (error) { if (completion) completion(nil, error); return; }
+        if (error) {
+            // Fallback to the bare /Items/{Id} path for older Emby versions
+            // that do not support the user-scoped item endpoint.
+            NSString *altPath = [NSString stringWithFormat:@"/Items/%@", itemId];
+            [self GET:altPath params:params completion:^(id r2, NSError *e2) {
+                if (e2) { if (completion) completion(nil, e2); return; }
+                if (![r2 isKindOfClass:[NSDictionary class]]) { if (completion) completion(@[], nil); return; }
+                id people = [r2 objectForKey:@"People"];
+                if (![people isKindOfClass:[NSArray class]]) { if (completion) completion(@[], nil); return; }
+                NSMutableArray *out = [NSMutableArray array];
+                for (id raw in people) {
+                    if (![raw isKindOfClass:[NSDictionary class]]) continue;
+                    OECastItem *cast = [OECastItem castWithDictionary:raw];
+                    if (cast) [out addObject:cast];
+                }
+                if (completion) completion(out, nil);
+            }];
+            return;
+        }
         if (![result isKindOfClass:[NSDictionary class]]) {
             if (completion) completion(@[], nil);
             return;

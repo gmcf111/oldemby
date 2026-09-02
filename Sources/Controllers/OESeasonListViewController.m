@@ -4,6 +4,7 @@
 #import "Services/OEImageCache.h"
 #import "Models/OEEmbyItem.h"
 #import "Models/OECastItem.h"
+#import "Models/OEServerConfig.h"
 #import "Controllers/OEEpisodeListViewController.h"
 #import "Views/OETheme.h"
 #import "Views/OEErrorAlertView.h"
@@ -142,7 +143,11 @@ static const CGFloat kCastStripHeight = 132.0;
     }];
 
     // Series detail: fills in a missing overview and the cast list in one request.
-    [[OEEmbyAPIClient sharedClient] GET:[NSString stringWithFormat:@"/Items/%@", self.series.itemId]
+    // Use the user-scoped /Users/{UserId}/Items/{Id} path because the bare
+    // /Items/{Id} endpoint omits People on many Emby versions.
+    OEServerConfig *serverConfig = [OEServerConfig sharedConfig];
+    NSString *seriesDetailPath = [NSString stringWithFormat:@"/Users/%@/Items/%@", serverConfig.userId ?: @"", self.series.itemId];
+    [[OEEmbyAPIClient sharedClient] GET:seriesDetailPath
                                 params:@{@"Fields": @"Overview,PrimaryImageAspectRatio,People"}
                            completion:^(id result, NSError *error) {
         if (error || ![result isKindOfClass:[NSDictionary class]]) {

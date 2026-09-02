@@ -29,6 +29,10 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 // Playback
 - (void)fetchPlaybackInfoForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
 - (void)fetchStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
+// Fetch a direct-stream URL with no transcoding — the server hands back the
+// original file as-is.  Used for content already in a format the device can
+// decode (e.g. older TV recordings in MPEG-2 / H.264 mp4).
+- (void)fetchDirectStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
 // Fetch server-provided lyrics first, then a compatible text stream embedded
 // in the audio container when the server has no standalone lyrics result.
 - (void)fetchLyricsForAudioItem:(OEEmbyItem *)item completion:(OEAPICompletion)completion;

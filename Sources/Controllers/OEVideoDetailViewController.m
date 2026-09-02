@@ -27,6 +27,7 @@ static const CGFloat kCastStripHeight = 132.0;
 @property (nonatomic, strong) UILabel *overviewHeaderLabel;
 @property (nonatomic, strong) UILabel *statusLabel;
 @property (nonatomic, strong) UIButton *playBtn;
+@property (nonatomic, strong) UIButton *directPlayBtn;
 @property (nonatomic, strong) UILabel *castHeaderLabel;
 @property (nonatomic, strong) OECastStripView *castStrip;
 @property (nonatomic, strong) UIScrollView *scrollView;
@@ -129,6 +130,19 @@ static const CGFloat kCastStripHeight = 132.0;
     [self.playBtn addTarget:self action:@selector(playTapped) forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:self.playBtn];
 
+    // Direct play button — requests the original file with no transcoding.
+    // Useful for content already in a device-decodable format (older TV
+    // recordings, MPEG-2 / H.264 mp4) where HLS transcode may fail or add
+    // unnecessary overhead.
+    self.directPlayBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.directPlayBtn.backgroundColor = [UIColor clearColor];
+    self.directPlayBtn.layer.cornerRadius = 7;
+    self.directPlayBtn.layer.borderWidth = 1.0;
+    self.directPlayBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    [self.directPlayBtn setTitle:@"不转码直接播放" forState:UIControlStateNormal];
+    [self.directPlayBtn addTarget:self action:@selector(directPlayTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self.contentView addSubview:self.directPlayBtn];
+
     [self applyTheme];
 
     // Load cover image — larger resolution since cover is bigger now
@@ -180,6 +194,8 @@ static const CGFloat kCastStripHeight = 132.0;
     self.overviewLabel.textColor = [OETheme secondaryTextColor];
     self.castHeaderLabel.textColor = [OETheme primaryTextColor];
     self.statusLabel.textColor = [OETheme accentColor];
+    self.directPlayBtn.layer.borderColor = [OETheme accentColor].CGColor;
+    [self.directPlayBtn setTitleColor:[OETheme accentColor] forState:UIControlStateNormal];
     if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
 }
 
@@ -233,12 +249,14 @@ static const CGFloat kCastStripHeight = 132.0;
     CGFloat castY = CGRectGetMaxY(self.castHeaderLabel.frame) + 6;
     self.castStrip.frame = CGRectMake(margin, castY, w - 2 * margin, kCastStripHeight);
 
-    // Play button + status
+    // Play button + status + direct play button
     CGFloat playY = CGRectGetMaxY(self.castStrip.frame) + 16;
     self.statusLabel.frame = CGRectMake(margin, playY, w - 2 * margin, 18);
     playY += 22;
     self.playBtn.frame = CGRectMake(margin, playY, w - 2 * margin, 46);
-    playY += 46 + margin;
+    playY += 46 + 8;
+    self.directPlayBtn.frame = CGRectMake(margin, playY, w - 2 * margin, 40);
+    playY += 40 + margin;
 
     // Set content size for scrolling
     self.scrollView.frame = self.view.bounds;
@@ -249,19 +267,36 @@ static const CGFloat kCastStripHeight = 132.0;
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     if (!self.activePlayerController) [self.playBtn setTitle:[self playButtonTitle] forState:UIControlStateNormal];
+    if (!self.activePlayerController) self.directPlayBtn.enabled = YES;
 }
 
 - (void)playTapped {
+    [self beginStreamFetch:^(OEEmbyAPIClient *client, NSString *itemId, OEAPICompletion cb) {
+        [client fetchStreamURLForItem:itemId isAudio:NO completion:cb];
+    } statusText:@"正在请求 HLS 转码流…"];
+}
+
+- (void)directPlayTapped {
+    if (self.fetchingStream || self.activePlayerController || self.dismissingPlayer) return;
+    [self beginStreamFetch:^(OEEmbyAPIClient *client, NSString *itemId, OEAPICompletion cb) {
+        [client fetchDirectStreamURLForItem:itemId isAudio:NO completion:cb];
+    } statusText:@"正在请求直接播放地址…"];
+}
+
+- (void)beginStreamFetch:(void(^)(OEEmbyAPIClient *, NSString *, OEAPICompletion))fetchBlock
+              statusText:(NSString *)statusText {
     if (self.fetchingStream || self.activePlayerController || self.dismissingPlayer) return;
     NSUInteger generation = ++self.playRequestGeneration;
     self.fetchingStream = YES;
-    self.statusLabel.text = @"正在请求 HLS 转码流…";
+    self.statusLabel.text = statusText;
     [self.playBtn setTitle:@"正在获取播放地址…" forState:UIControlStateNormal];
     self.playBtn.enabled = NO;
-    [[OEEmbyAPIClient sharedClient] fetchStreamURLForItem:self.item.itemId isAudio:NO completion:^(id result, NSError *error) {
+    self.directPlayBtn.enabled = NO;
+    fetchBlock([OEEmbyAPIClient sharedClient], self.item.itemId, ^(id result, NSError *error) {
         if (generation != self.playRequestGeneration) return;
         self.fetchingStream = NO;
         self.playBtn.enabled = YES;
+        self.directPlayBtn.enabled = YES;
         [self.playBtn setTitle:[self playButtonTitle] forState:UIControlStateNormal];
         if (error) {
             NSString *detail = [NSString stringWithFormat:@"错误域：%@\n错误码：%ld", error.domain ?: @"-", (long)error.code];
