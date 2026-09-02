@@ -309,6 +309,7 @@ static const CGFloat kCastStripHeight = 132.0;
     }
     // Left-cover/right-text layout; no episode-number prefix (seasons pass 0).
     cell.episodeLayout = YES;
+    cell.portraitCover = YES;
     OEEmbyItem *season = self.seasons[indexPath.row];
     [cell configureWithItem:season episodeNumber:0];
     cell.titleLabel.text = season.indexNumber > 0

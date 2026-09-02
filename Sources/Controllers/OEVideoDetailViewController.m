@@ -21,9 +21,9 @@ static const CGFloat kDetailCoverMinWidth = 120.0;
 static const CGFloat kDetailCoverMinHeight = 90.0;
 static const CGFloat kDetailCoverMaxHeight = 200.0;
 static const CGFloat kCastStripHeight = 132.0;
-static const CGFloat kOverlayButtonSize = 36.0;
-static const CGFloat kOverlayBottomMargin = 10.0; // aligned with system control bar
-static const CGFloat kOverlaySideMargin = 8.0; // left/right edge margin
+static const CGFloat kOverlayButtonSize = 32.0;
+static const CGFloat kOverlayBottomMargin = 8.0; // inside system control bar
+static const CGFloat kOverlaySideMargin = 6.0; // left/right edge margin
 
 @interface OEVideoDetailViewController () <OEStreamSelectionDelegate>
 @property (nonatomic, strong) OEEmbyItem *item;
@@ -626,9 +626,9 @@ static const CGFloat kOverlaySideMargin = 8.0; // left/right edge margin
     [playerView addSubview:_overlayControlsView];
 
     _audioButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    _audioButton.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
-    _audioButton.layer.cornerRadius = kOverlayButtonSize / 2;
-    _audioButton.titleLabel.font = [UIFont systemFontOfSize:11];
+    _audioButton.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
+    _audioButton.layer.cornerRadius = 4;
+    _audioButton.titleLabel.font = [UIFont systemFontOfSize:10];
     _audioButton.titleLabel.numberOfLines = 2;
     _audioButton.titleLabel.textAlignment = NSTextAlignmentCenter;
     [_audioButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -637,9 +637,9 @@ static const CGFloat kOverlaySideMargin = 8.0; // left/right edge margin
     [_overlayControlsView addSubview:_audioButton];
 
     _subtitleButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    _subtitleButton.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
-    _subtitleButton.layer.cornerRadius = kOverlayButtonSize / 2;
-    _subtitleButton.titleLabel.font = [UIFont systemFontOfSize:11];
+    _subtitleButton.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
+    _subtitleButton.layer.cornerRadius = 4;
+    _subtitleButton.titleLabel.font = [UIFont systemFontOfSize:10];
     _subtitleButton.titleLabel.numberOfLines = 2;
     _subtitleButton.titleLabel.textAlignment = NSTextAlignmentCenter;
     [_subtitleButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];

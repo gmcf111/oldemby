@@ -146,6 +146,7 @@
     OEItemCell *cell = [tableView dequeueReusableCellWithIdentifier:ID];
     if (!cell) cell = [[OEItemCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:ID];
     cell.episodeLayout = YES;
+    cell.portraitCover = NO;
     OEEmbyItem *it = (indexPath.row < (NSInteger)self.episodes.count) ? self.episodes[indexPath.row] : nil;
     if (!it) return cell;
     [cell configureWithItem:it episodeNumber:it.episodeNumber];

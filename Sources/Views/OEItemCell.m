@@ -80,12 +80,18 @@
     CGFloat w = self.contentView.bounds.size.width;
     if (_episodeLayout) {
         CGFloat imageHeight = self.contentView.bounds.size.height;
-        // Episode thumbnails are landscape (16:9); use the real aspect
-        // ratio when available, falling back to 16:9.
-        CGFloat aspectRatio = self.primaryImageAspectRatio > 0 ? self.primaryImageAspectRatio : 1.78;
-        // Clamp to a reasonable landscape range so very wide or very
-        // tall images don't break the row.
-        aspectRatio = MAX(1.2, MIN(aspectRatio, 2.8));
+        // Season rows use portrait (2:3) posters; episode rows use
+        // landscape (16:9) thumbnails. Use the real aspect ratio when
+        // available, falling back to the appropriate default.
+        CGFloat defaultRatio = _portraitCover ? (2.0 / 3.0) : 1.78;
+        CGFloat aspectRatio = self.primaryImageAspectRatio > 0 ? self.primaryImageAspectRatio : defaultRatio;
+        if (_portraitCover) {
+            // Portrait: clamp to a vertical poster range.
+            aspectRatio = MAX(0.4, MIN(aspectRatio, 0.8));
+        } else {
+            // Landscape: clamp to a horizontal range.
+            aspectRatio = MAX(1.2, MIN(aspectRatio, 2.8));
+        }
         CGFloat imageWidth = MAX(1.0, MIN(imageHeight * aspectRatio, w * 0.55));
         _coverView.frame = CGRectMake(0, 0, imageWidth, imageHeight);
         CGFloat textX = imageWidth + 10;
@@ -135,6 +141,7 @@
     self.detailLabel.text = nil;
     self.representedItemId = nil;
     self.primaryImageAspectRatio = 0;
+    self.portraitCover = NO;
     self.episodeNumberLabel.hidden = YES;
     self.episodeNumberLabel.text = nil;
 }
@@ -163,9 +170,10 @@
     self.detailLabel.text = [NSString stringWithFormat:@"%@  %@", item.type ?: @"", [item displayDuration]];
     // Library rows request a small banner thumbnail matching the quarter-size
     // left cover; compact/episode rows keep their original small thumbnails.
-    // Episode rows request landscape thumbnails (16:9) instead of portrait.
-    NSInteger imageWidth = self.episodeLayout ? 320 : (self.compactLayout ? 128 : 320);
-    NSInteger imageHeight = self.episodeLayout ? 180 : (self.compactLayout ? 96 : 180);
+    // Season rows request portrait posters (2:3); episode rows request
+    // landscape thumbnails (16:9).
+    NSInteger imageWidth = self.episodeLayout ? (self.portraitCover ? 280 : 320) : (self.compactLayout ? 128 : 320);
+    NSInteger imageHeight = self.episodeLayout ? (self.portraitCover ? 560 : 180) : (self.compactLayout ? 96 : 180);
     NSString *url = [[OEEmbyAPIClient sharedClient] imageURLForItem:item width:imageWidth height:imageHeight];
     [[OEImageCache sharedCache] loadImageFromURL:url placeholder:nil completion:^(UIImage *image) {
         if ([self.representedItemId isEqualToString:item.itemId]) self.coverView.image = image;
