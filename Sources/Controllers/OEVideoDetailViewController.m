@@ -294,7 +294,10 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
     id rawIndex = stream[@"Index"];
     if ([rawIndex isKindOfClass:[NSNumber class]]) info.index = [NSString stringWithFormat:@"%ld", (long)[rawIndex integerValue]];
     else if ([rawIndex isKindOfClass:[NSString class]]) info.index = rawIndex;
-    NSString *title = [stream[@"DisplayTitle"] isKindOfClass:[NSString class]] ? stream[@"DisplayTitle"] : nil;
+    NSString *displayTitle = [stream[@"DisplayTitle"] isKindOfClass:[NSString class]] ? stream[@"DisplayTitle"] : nil;
+    // The track's own title ("简体&英文", "Forced", a fansub group name) is often
+    // the only thing separating two subtitles in the same language.
+    NSString *trackTitle = [stream[@"Title"] isKindOfClass:[NSString class]] ? stream[@"Title"] : nil;
     NSString *codec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : @"";
     NSString *lang = [stream[@"Language"] isKindOfClass:[NSString class]] ? stream[@"Language"] : @"";
     info.language = lang; info.codec = codec;
@@ -304,11 +307,14 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
     if ([deliveryUrl isKindOfClass:[NSString class]]) info.deliveryUrl = deliveryUrl;
     NSMutableString *dt = [NSMutableString string];
     if (lang.length) [dt appendFormat:@"%@ ", [self languageDisplay:lang]];
+    if (trackTitle.length) [dt appendFormat:@"%@ ", trackTitle];
     if (codec.length) [dt appendFormat:@"%@ ", codec.uppercaseString];
+    if ([stream[@"IsForced"] boolValue]) [dt appendString:@"[强制] "];
+    if (info.isExternal) [dt appendString:@"[外挂] "];
     if (info.isDefault) [dt appendString:@"(默认)"];
     while ([dt hasSuffix:@" "]) [dt deleteCharactersInRange:NSMakeRange(dt.length - 1, 1)];
-    if (dt.length == 0 && title.length) dt = [title mutableCopy];
-    info.title = dt.length ? [dt copy] : (title ?: @"未知");
+    if (dt.length == 0 && displayTitle.length) dt = [displayTitle mutableCopy];
+    info.title = dt.length ? [dt copy] : (displayTitle ?: @"未知");
     return info;
 }
 
