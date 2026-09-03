@@ -145,7 +145,7 @@
             CGFloat ix = w * 0.12, iy = h * 0.10;
             CGFloat hw = w - ix * 2, hh = h - iy * 2;
             CGFloat x0 = ix, x1 = ix + hw;          // left/right extremes
-            CGFloat yT = iy, yB = iy + hh;          // top/bottom
+            CGFloat yT = iy;                        // top of the heart box
             CGFloat cx = ix + hw * 0.5;
             CGContextBeginPath(ctx);
             CGContextMoveToPoint(ctx, cx, yT + hh * 0.92);                                    // bottom tip
