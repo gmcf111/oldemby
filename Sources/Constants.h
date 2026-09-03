@@ -14,6 +14,7 @@
 #define kDefaultsServerToken           @"OEServerToken"
 #define kDefaultsServerUsername        @"OEServerUsername"
 #define kDefaultsThemeMode             @"OEThemeMode"             // NSInteger: 0=dark 1=light
+#define kDefaultsMusicRepeatMode       @"OEMusicRepeatMode"       // NSInteger: 0=off 1=all 2=one
 
 // Default forced transcode params (PRD)
 #define kDefaultResolution             @"720p"

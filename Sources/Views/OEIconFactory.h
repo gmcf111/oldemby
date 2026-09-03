@@ -7,7 +7,13 @@ typedef NS_ENUM(NSInteger, OEIconType) {
     OEIconTypePlay,
     OEIconTypePause,
     OEIconTypePrevious,
-    OEIconTypeNext
+    OEIconTypeNext,
+    OEIconTypeChevronDown,
+    OEIconTypeHeart,
+    OEIconTypeHeartFilled,
+    OEIconTypeRepeat,
+    OEIconTypeRepeatOne,
+    OEIconTypeList
 };
 
 @interface OEIconFactory : NSObject

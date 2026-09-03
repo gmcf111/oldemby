@@ -73,8 +73,13 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width;
 - (NSString *)imageURLForItem:(OEEmbyItem *)item width:(NSInteger)width height:(NSInteger)height;
 
+// Favorites
+// Emby: POST/DELETE /Users/{UserId}/FavoriteItems/{ItemId}
+- (void)setItem:(NSString *)itemId favorite:(BOOL)favorite completion:(OEAPICompletion)completion;
+
 // Generic
 - (void)GET:(NSString *)path params:(NSDictionary *)params completion:(OEAPICompletion)completion;
 - (void)POST:(NSString *)path jsonBody:(NSDictionary *)body completion:(OEAPICompletion)completion;
+- (void)DELETE:(NSString *)path completion:(OEAPICompletion)completion;
 
 @end

@@ -24,6 +24,7 @@
 @property (nonatomic, assign) NSUInteger generation;
 @property (nonatomic, assign) BOOL seeking;
 @property (nonatomic, assign) BOOL userWantsPlayback;
+@property (nonatomic, assign) OEMusicRepeatMode repeatMode;
 @end
 
 @implementation OEMusicPlaybackManager
@@ -40,6 +41,8 @@
         _state = OEMusicPlaybackStateIdle;
         _statusText = @"未播放";
         _currentIndex = NSNotFound;
+        NSInteger savedMode = [[NSUserDefaults standardUserDefaults] integerForKey:kDefaultsMusicRepeatMode];
+        _repeatMode = (savedMode >= OEMusicRepeatModeOff && savedMode <= OEMusicRepeatModeOne) ? (OEMusicRepeatMode)savedMode : OEMusicRepeatModeOff;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioInterrupted:) name:AVAudioSessionInterruptionNotification object:nil];
     }
     return self;
@@ -114,7 +117,9 @@
     [self publishState];
 
     OEEmbyItem *item = self.currentItem;
-    NSString *imageURL = [[OEEmbyAPIClient sharedClient] imageURLForItem:item width:240];
+    // 640px keeps the full player's large artwork sharp on Retina screens;
+    // the same image feeds Now Playing and the mini player.
+    NSString *imageURL = [[OEEmbyAPIClient sharedClient] imageURLForItem:item width:640];
     [[OEImageCache sharedCache] loadImageFromURL:imageURL placeholder:nil completion:^(UIImage *image) {
         if (generation != self.generation || item != self.currentItem) return;
         self.artwork = image;
@@ -283,9 +288,26 @@
     [self publishState];
 }
 
+- (void)cycleRepeatMode {
+    self.repeatMode = (OEMusicRepeatMode)((self.repeatMode + 1) % 3);
+    [[NSUserDefaults standardUserDefaults] setInteger:self.repeatMode forKey:kDefaultsMusicRepeatMode];
+    [self publishState];
+}
+
+- (void)playItemAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.playlist.count) return;
+    self.currentIndex = index;
+    self.userWantsPlayback = YES;
+    [self loadCurrentItem];
+}
+
 - (void)next {
     if (self.currentIndex + 1 < (NSInteger)self.playlist.count) {
         self.currentIndex++;
+        [self loadCurrentItem];
+    } else if (self.repeatMode == OEMusicRepeatModeAll && self.playlist.count) {
+        // Manual skip follows the repeat-all wrap so the queue never dead-ends.
+        self.currentIndex = 0;
         [self loadCurrentItem];
     }
 }
@@ -328,7 +350,16 @@
 }
 
 - (void)itemDidFinish:(NSNotification *)notification {
+    if (self.repeatMode == OEMusicRepeatModeOne) {
+        [self seekToProgress:0 completion:nil];
+        if (!self.isPlaying) [self resume];
+        return;
+    }
     if (self.currentIndex + 1 < (NSInteger)self.playlist.count) [self next];
+    else if (self.repeatMode == OEMusicRepeatModeAll && self.playlist.count) {
+        self.currentIndex = 0;
+        [self loadCurrentItem];
+    }
     else {
         self.progress = 0;
         self.currentTime = 0;

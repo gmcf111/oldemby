@@ -59,6 +59,10 @@
     if ([ratio isKindOfClass:[NSNumber class]] && [ratio doubleValue] > 0) it.primaryImageAspectRatio = [ratio doubleValue];
     NSNumber *ticks = [dict objectForKey:@"RunTimeTicks"];
     if ([ticks isKindOfClass:[NSNumber class]]) it.runTimeTicks = [ticks longLongValue];
+    NSDictionary *userData = [dict objectForKey:@"UserData"];
+    if ([userData isKindOfClass:[NSDictionary class]]) {
+        it.favorite = [[userData objectForKey:@"IsFavorite"] boolValue];
+    }
     if (it.itemType == OEEmbyItemTypeAudio) {
         NSArray *streams = [dict objectForKey:@"MediaStreams"];
         for (id value in streams) {

@@ -12,6 +12,12 @@ typedef NS_ENUM(NSInteger, OEMusicPlaybackState) {
     OEMusicPlaybackStateFailed
 };
 
+typedef NS_ENUM(NSInteger, OEMusicRepeatMode) {
+    OEMusicRepeatModeOff = 0, // play the playlist once, stop at the end
+    OEMusicRepeatModeAll,     // wrap around to the first track
+    OEMusicRepeatModeOne      // repeat the current track
+};
+
 @interface OEMusicPlaybackManager : NSObject
 
 @property (nonatomic, readonly) OEEmbyItem *currentItem;
@@ -28,6 +34,7 @@ typedef NS_ENUM(NSInteger, OEMusicPlaybackState) {
 @property (nonatomic, readonly) NSString *lastErrorDetail;
 @property (nonatomic, readonly, getter=isActive) BOOL active;
 @property (nonatomic, readonly, getter=isPlaying) BOOL playing;
+@property (nonatomic, readonly) OEMusicRepeatMode repeatMode;
 
 + (instancetype)sharedManager;
 
@@ -37,6 +44,11 @@ typedef NS_ENUM(NSInteger, OEMusicPlaybackState) {
 - (void)resume;
 - (void)next;
 - (void)previous;
+// Cycles Off -> All -> One -> Off and persists the choice. Posts a state
+// change notification so transport UIs can swap the repeat icon.
+- (void)cycleRepeatMode;
+// Jump directly to a playlist entry (used by the play queue UI).
+- (void)playItemAtIndex:(NSInteger)index;
 - (void)seekToProgress:(float)progress completion:(void(^)(BOOL finished))completion;
 - (void)receiveRemoteControlEvent:(UIEvent *)event;
 

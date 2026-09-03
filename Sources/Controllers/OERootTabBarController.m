@@ -27,7 +27,7 @@
     self.miniPlayer.hidden = YES;
     [self.view addSubview:self.miniPlayer];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateMiniPlayerVisibility) name:kNotificationMusicPlaybackStateChanged object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateMiniPlayerVisibility) name:kNotificationMusicFullPlayerVisibilityChanged object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(fullPlayerVisibilityChanged:) name:kNotificationMusicFullPlayerVisibilityChanged object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(showFullPlayerFromMiniPlayer) name:@"OEMiniPlayerDidRequestFullPlayer" object:nil];
     // Music failures can happen while any tab is on screen (playback is
     // global), so the always-present root controller owns the error sheet.
@@ -59,8 +59,19 @@
     return self.selectedViewController == self.musicNavigationController;
 }
 
+// Track visibility from the notification object instead of inspecting
+// presentedViewController: that property only clears when the dismiss
+// animation completes, which would leave the mini player hidden afterwards.
+- (void)fullPlayerVisibilityChanged:(NSNotification *)note {
+    // The music library also posts this notification (with itself as object)
+    // to force a visibility refresh, so check the sender's class rather than
+    // mere non-nil.
+    self.fullPlayerVisible = [note.object isKindOfClass:[OEMusicPlayerViewController class]];
+    [self updateMiniPlayerVisibility];
+}
+
 - (BOOL)isFullPlayerVisible {
-    return [self.musicNavigationController.visibleViewController isKindOfClass:[OEMusicPlayerViewController class]];
+    return self.fullPlayerVisible;
 }
 
 - (void)updateMiniPlayerVisibility {
@@ -82,8 +93,10 @@
     OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
     if (!manager.currentItem || [self isFullPlayerVisible]) return;
     OEMusicPlayerViewController *player = [[OEMusicPlayerViewController alloc] initWithItem:manager.currentItem playlist:manager.playlist];
-    player.hidesBottomBarWhenPushed = YES;
-    [self.musicNavigationController pushViewController:player animated:YES];
+    // Present over the tab bar so the player slides up from the mini player's
+    // spot at the bottom of the screen instead of pushing sideways.
+    player.modalTransitionStyle = UIModalTransitionStyleCoverVertical;
+    [self presentViewController:player animated:YES completion:nil];
     [self updateMiniPlayerVisibility];
 }
 

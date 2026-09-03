@@ -19,6 +19,7 @@ OldEmby_FILES = \
 	Sources/Controllers/OESettingsViewController.m \
 	Sources/Controllers/OEMusicLibraryViewController.m \
 	Sources/Controllers/OEMusicPlayerViewController.m \
+	Sources/Controllers/OEMusicPlayQueueViewController.m \
 	Sources/Controllers/OERootTabBarController.m \
 	Sources/Models/OEEmbyItem.m \
 	Sources/Models/OECastItem.m \

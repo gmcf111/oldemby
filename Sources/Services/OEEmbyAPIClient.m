@@ -151,6 +151,25 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     [self sendRequest:req completion:completion];
 }
 
+- (void)DELETE:(NSString *)path completion:(OEAPICompletion)completion {
+    NSURL *url = [self urlForPath:path params:nil];
+    if (!url) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"No host configured"}]); return; }
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    req.HTTPMethod = @"DELETE";
+    [[self authHeaders] enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *s){ [req setValue:v forHTTPHeaderField:k]; }];
+    [self sendRequest:req completion:completion];
+}
+
+#pragma mark - Favorites
+
+- (void)setItem:(NSString *)itemId favorite:(BOOL)favorite completion:(OEAPICompletion)completion {
+    OEServerConfig *c = [OEServerConfig sharedConfig];
+    if (!c.userId.length || !itemId.length) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }
+    NSString *path = [NSString stringWithFormat:@"/Users/%@/FavoriteItems/%@", c.userId, itemId];
+    if (favorite) [self POST:path jsonBody:@{} completion:completion];
+    else [self DELETE:path completion:completion];
+}
+
 #pragma mark - Auth
 
 - (void)authenticateWithHost:(NSString *)host username:(NSString *)user password:(NSString *)pass completion:(OEAPICompletion)completion {

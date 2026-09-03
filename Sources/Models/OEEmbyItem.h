@@ -25,6 +25,8 @@ typedef NS_ENUM(NSInteger, OEEmbyItemType) {
 @property (nonatomic, copy) NSString *overview;
 @property (nonatomic, copy) NSString *album;
 @property (nonatomic, copy) NSString *artist;
+// From UserData.IsFavorite; NO when the listing omitted UserData.
+@property (nonatomic, assign) BOOL favorite;
 // Candidate text subtitle stream embedded in an audio container. NSNotFound
 // means the item listing did not advertise a compatible lyrics stream.
 @property (nonatomic, assign) NSInteger embeddedLyricsStreamIndex;
