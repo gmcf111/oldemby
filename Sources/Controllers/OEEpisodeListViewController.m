@@ -165,6 +165,9 @@
     if (indexPath.row >= (NSInteger)self.episodes.count) return;
     OEEmbyItem *it = self.episodes[indexPath.row];
     OEVideoDetailViewController *vc = [[OEVideoDetailViewController alloc] initWithItem:it];
+    // Hand over the whole season so the player bar can switch episodes.
+    vc.episodeSiblings = self.episodes;
+    vc.episodeIndex = indexPath.row;
     [self.navigationController pushViewController:vc animated:YES];
 }
 
