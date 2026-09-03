@@ -565,7 +565,7 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         if (error) { if (completion) completion(nil, error); return; }
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
         if (http.statusCode < 200 || http.statusCode >= 300) {
-            NSError *statusError = [NSError errorWithDomain:@"OEEmbyAPI" code:http.statusCode userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"HTTP %ld while reading embedded lyrics", (long)http.statusCode]}];
+            NSError *statusError = [NSError errorWithDomain:@"OEEmbyAPI" code:http.statusCode userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"HTTP %ld while reading text stream", (long)http.statusCode]}];
             if (completion) completion(nil, statusError);
             return;
         }
@@ -721,12 +721,29 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     // Default to SRT format — Emby's subtitle stream endpoint transcodes
     // compatible text tracks (ASS, VTT, etc.) to SRT on the fly.
     NSString *fmt = format.length ? format : @"srt";
-    NSString *path = [NSString stringWithFormat:@"/Items/%@/%@/Subtitles/%ld/Stream.%@",
-                      OEEncodeQueryComponent(itemId),
-                      OEEncodeQueryComponent(mediaSourceId),
-                      (long)streamIndex,
-                      OEEncodeQueryComponent(fmt)];
-    [self GETText:path completion:completion];
+    // /Videos/… is the route Emby's SubtitleService has always declared;
+    // /Items/… is an alias only newer builds answer, so try the canonical one
+    // first and fall back on a 404/405 from an older or stricter server.
+    NSString *videosPath = [NSString stringWithFormat:@"/Videos/%@/%@/Subtitles/%ld/Stream.%@",
+                            OEEncodeQueryComponent(itemId),
+                            OEEncodeQueryComponent(mediaSourceId),
+                            (long)streamIndex,
+                            OEEncodeQueryComponent(fmt)];
+    NSString *itemsPath = [NSString stringWithFormat:@"/Items/%@/%@/Subtitles/%ld/Stream.%@",
+                           OEEncodeQueryComponent(itemId),
+                           OEEncodeQueryComponent(mediaSourceId),
+                           (long)streamIndex,
+                           OEEncodeQueryComponent(fmt)];
+    [self GETText:videosPath completion:^(id text, NSError *error) {
+        BOOL usable = !error && [text isKindOfClass:[NSString class]] && [text length];
+        if (usable) {
+            if (completion) completion(text, nil);
+            return;
+        }
+        NSLog(@"[OldEmby] subtitle via /Videos failed (%@), retrying /Items",
+              error ? error.localizedDescription : @"empty body");
+        [self GETText:itemsPath completion:completion];
+    }];
 }
 
 #pragma mark - Stream URL with Audio/Subtitle Index
@@ -754,6 +771,12 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         url = [self removeQueryParam:url key:@"SubtitleMethod"];
         sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
         [url appendFormat:@"%@SubtitleMethod=Encode", sep];
+    } else {
+        // A negative index means "no server-side subtitles". Any leftover
+        // parameters must go, or the server keeps burning the previous track
+        // into the video underneath the locally drawn overlay.
+        url = [self removeQueryParam:url key:@"SubtitleStreamIndex"];
+        url = [self removeQueryParam:url key:@"SubtitleMethod"];
     }
     return OEEscapeIllegalURLCharacters(url);
 }

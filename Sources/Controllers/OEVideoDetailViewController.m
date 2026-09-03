@@ -3,6 +3,7 @@
 #import "Models/OECastItem.h"
 #import "Models/OETranscodeSettings.h"
 #import "Models/OESRTSubtitleParser.h"
+#import "Models/OEStreamInfo.h"
 #import "Services/OEEmbyAPIClient.h"
 #import "Services/OEImageCache.h"
 #import "Views/OETheme.h"
@@ -10,9 +11,9 @@
 #import "Views/OEErrorAlertView.h"
 #import "Views/OEMediaInfoView.h"
 #import "Views/OESubtitleOverlayView.h"
-#import "Views/OEStreamSelectionView.h"
 #import "Constants.h"
 #import <MediaPlayer/MediaPlayer.h>
+#import <math.h>
 
 static const CGFloat kDetailSidePadding = 12.0;
 static const CGFloat kDetailCoverWidthFraction = 0.42;
@@ -26,6 +27,11 @@ static const CGFloat kOverlayBottomMargin = 48.0; // fallback: above the system 
 static const CGFloat kOverlaySideMargin = 6.0; // fallback: left/right edge margin
 static const CGFloat kOverlayButtonGap = 8.0; // gap between volume slider and buttons
 static const NSTimeInterval kControlSyncInterval = 0.2;
+// Tags telling the two UIActionSheets apart in the shared delegate callback.
+static const NSInteger kAudioSheetTag = 8001;
+static const NSInteger kSubtitleSheetTag = 8002;
+// How long a transient notice (e.g. a subtitle load failure) stays on screen.
+static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 
 // Full-screen container that only lets touches land on its subviews,
 // so taps elsewhere still reach the system player controls below.
@@ -38,7 +44,7 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
 }
 @end
 
-@interface OEVideoDetailViewController () <OEStreamSelectionDelegate>
+@interface OEVideoDetailViewController () <UIActionSheetDelegate>
 @property (nonatomic, strong) OEEmbyItem *item;
 @property (nonatomic, strong) UIImageView *cover;
 @property (nonatomic, strong) UILabel *titleLabel;
@@ -78,7 +84,13 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
 @property (nonatomic, strong) NSTimer *controlSyncTimer;
 @property (nonatomic, weak) UIView *systemVolumeView;
 @property (nonatomic, assign) CGRect lastVolumeFrame;
-@property (nonatomic, strong) OEStreamSelectionView *streamSelectionView;
+// The sheet currently on screen, kept so teardown can dismiss it: UIActionSheet
+// holds its delegate unretained and would message a freed controller.
+@property (nonatomic, strong) UIActionSheet *activeSheet;
+@property (nonatomic, assign) NSUInteger subtitleLoadGeneration;
+@property (nonatomic, assign) NSUInteger subtitleNoticeGeneration;
+// Graphic subtitle tracks dropped while parsing, so an empty picker can say why.
+@property (nonatomic, assign) NSInteger skippedImageSubtitleCount;
 @end
 
 @implementation OEVideoDetailViewController
@@ -228,6 +240,7 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
 - (void)parseStreamInfoFromMediaSources:(NSArray *)mediaSources {
     NSMutableArray *audio = [NSMutableArray array];
     NSMutableArray *subs = [NSMutableArray array];
+    NSInteger skippedImageSubs = 0;
     NSString *firstMediaSourceId = nil;
     for (NSDictionary *source in mediaSources) {
         if (![source isKindOfClass:[NSDictionary class]]) continue;
@@ -260,7 +273,7 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
                                       ([codec rangeOfString:@"lrc"].location != NSNotFound) ||
                                       ([codec rangeOfString:@"microdvd"].location != NSNotFound) ||
                                       [codec isEqualToString:@"sub"];
-                if (!isText && !knownTextCodec) continue;
+                if (!isText && !knownTextCodec) { skippedImageSubs++; continue; }
                 info.mediaSourceId = firstMediaSourceId;
                 [subs addObject:info];
             }
@@ -268,6 +281,7 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
     }
     self.audioStreams = audio;
     self.subtitleStreams = subs;
+    self.skippedImageSubtitleCount = skippedImageSubs;
     self.activeMediaSourceId = firstMediaSourceId;
     for (NSInteger i = 0; i < (NSInteger)audio.count; i++) {
         if (((OEStreamInfo *)audio[i]).isDefault) { self.selectedAudioIndex = i; break; }
@@ -633,6 +647,12 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
     UIView *playerView = self.activePlayerController.view;
     if (!playerView) return;
 
+    // Subtitle layer goes on first so the button container stays above it and
+    // keeps receiving taps.
+    _subtitleOverlay = [[OESubtitleOverlayView alloc] initWithFrame:playerView.bounds];
+    _subtitleOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [playerView addSubview:_subtitleOverlay];
+
     // Container for audio/subtitle buttons — positioned around the system
     // volume slider and shown/hidden in sync with the system control bar.
     _overlayControlsView = [[OEOverlayPassthroughView alloc] initWithFrame:playerView.bounds];
@@ -663,11 +683,6 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
     [_subtitleButton setTitle:@"字幕" forState:UIControlStateNormal];
     [_subtitleButton addTarget:self action:@selector(subtitleButtonTapped) forControlEvents:UIControlEventTouchUpInside];
     [_overlayControlsView addSubview:_subtitleButton];
-
-    // Add subtitle overlay on top of the player view
-    _subtitleOverlay = [[OESubtitleOverlayView alloc] initWithFrame:playerView.bounds];
-    _subtitleOverlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [playerView addSubview:_subtitleOverlay];
 
     // Poll the system control bar (via its volume slider) so our buttons
     // track its position and appear/disappear together with it.
@@ -707,15 +722,41 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
     if (!CGRectEqualToRect(volumeFrame, _lastVolumeFrame)) {
         _lastVolumeFrame = volumeFrame;
         [self layoutOverlayControls];
+        [self updateSubtitleInsetForControlsVisible:_overlayControlsVisible];
     }
     BOOL visible = [self systemControlsVisible:volumeView];
     if (visible != _overlayControlsVisible) {
         _overlayControlsVisible = visible;
+        [self updateSubtitleInsetForControlsVisible:visible];
         [UIView beginAnimations:nil context:nil];
         [UIView setAnimationDuration:0.25];
         _overlayControlsView.alpha = visible ? 1.0 : 0.0;
         [UIView commitAnimations];
     }
+    // The player reshuffles its own layers when the control bar toggles, which
+    // can bury the overlays. Keep controls on top, subtitles just below them.
+    UIView *playerView = _overlayControlsView.superview;
+    if (playerView && playerView.subviews.lastObject != _overlayControlsView) {
+        if (_subtitleOverlay) [playerView bringSubviewToFront:_subtitleOverlay];
+        [playerView bringSubviewToFront:_overlayControlsView];
+    }
+}
+
+// Keep subtitle text clear of the system control bar while it is on screen.
+- (void)updateSubtitleInsetForControlsVisible:(BOOL)visible {
+    if (!_subtitleOverlay) return;
+    CGFloat inset = 0;
+    if (visible) {
+        CGFloat h = _subtitleOverlay.bounds.size.height;
+        if (!CGRectIsEmpty(_lastVolumeFrame) && h > 1) {
+            // Sit above the volume slider, the lowest row of the control bar.
+            inset = h - CGRectGetMinY(_lastVolumeFrame) + kOverlayButtonGap;
+        } else {
+            inset = kOverlayBottomMargin + kOverlayButtonSize;
+        }
+        if (inset < 0) inset = 0;
+    }
+    _subtitleOverlay.bottomInset = inset;
 }
 
 // The system control bar fades as a whole, so the volume slider is visible
@@ -757,86 +798,181 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
 }
 
 - (void)audioButtonTapped {
-    [self showStreamSelectionForAudio:YES];
+    [self presentTrackSheetForAudio:YES];
 }
 
 - (void)subtitleButtonTapped {
-    [self showStreamSelectionForAudio:NO];
+    [self presentTrackSheetForAudio:NO];
 }
 
-#pragma mark - Stream Selection
+#pragma mark - Track Selection Sheets
 
-- (void)showStreamSelectionForAudio:(BOOL)isAudio {
-    UIWindow *window = self.activePlayerController.view.window;
-    if (!window) window = [UIApplication sharedApplication].keyWindow;
-    if (!window) return;
+// Audio and subtitles get one sheet each, and both are UIActionSheet — the
+// native picker on every target OS here. The system draws it, rotates it with
+// the interface and lays it out for the current orientation; a hand-rolled view
+// added straight to the UIWindow cannot, because on iOS 6-8 the window's
+// coordinate space stays portrait and rotation lives in a transform on the
+// root view controller.
+- (void)presentTrackSheetForAudio:(BOOL)isAudio {
+    UIView *host = [self sheetHostView];
+    if (!host) return;
 
-    _streamSelectionView = [[OEStreamSelectionView alloc] initWithFrame:CGRectZero
-                                                           audioStreams:self.audioStreams
-                                                        subtitleStreams:self.subtitleStreams
-                                                     selectedAudioIndex:self.selectedAudioIndex
-                                                  selectedSubtitleIndex:self.selectedSubtitleIndex
-                                                            delegate:self];
-    [_streamSelectionView showInWindow:window];
+    // Only one sheet at a time: a second tap replaces the first.
+    [self dismissActiveSheet];
+
+    NSArray *streams = isAudio ? self.audioStreams : self.subtitleStreams;
+    if (!streams.count) {
+        NSString *notice;
+        if (isAudio) {
+            notice = @"未找到可切换的音轨";
+        } else if (self.skippedImageSubtitleCount > 0) {
+            // Graphic tracks (PGS, VobSub) are pictures, not text — the overlay
+            // cannot draw them, so they never make it into the list.
+            notice = [NSString stringWithFormat:@"该视频的 %ld 条字幕均为图形格式，本机无法显示",
+                      (long)self.skippedImageSubtitleCount];
+        } else {
+            notice = @"该视频没有可用字幕";
+        }
+        [self presentNoticeSheetWithTitle:notice inView:host];
+        return;
+    }
+
+    UIActionSheet *sheet = [[UIActionSheet alloc] initWithTitle:(isAudio ? @"选择音轨" : @"选择字幕")
+                                                       delegate:self
+                                              cancelButtonTitle:nil
+                                         destructiveButtonTitle:nil
+                                              otherButtonTitles:nil];
+    sheet.tag = isAudio ? kAudioSheetTag : kSubtitleSheetTag;
+
+    // Subtitles get an explicit "off" row first, so button index 0 means -1
+    // and every stream sits one slot further along.
+    if (!isAudio) {
+        [sheet addButtonWithTitle:[self sheetTitleForText:@"关闭字幕"
+                                                selected:(self.selectedSubtitleIndex < 0)]];
+    }
+    NSInteger selected = isAudio ? self.selectedAudioIndex : self.selectedSubtitleIndex;
+    for (NSInteger i = 0; i < (NSInteger)streams.count; i++) {
+        OEStreamInfo *info = streams[i];
+        NSString *title = info.title.length ? info.title : @"未知";
+        [sheet addButtonWithTitle:[self sheetTitleForText:title selected:(i == selected)]];
+    }
+    sheet.cancelButtonIndex = [sheet addButtonWithTitle:@"取消"];
+
+    self.activeSheet = sheet;
+    [sheet showInView:host];
 }
 
-- (void)streamSelectionView:(OEStreamSelectionView *)view
-       didSelectAudioIndex:(NSInteger)audioIndex {
+// UIActionSheet rows cannot carry a checkmark accessory, so the current track
+// is marked in the title itself.
+- (NSString *)sheetTitleForText:(NSString *)text selected:(BOOL)selected {
+    return selected ? [NSString stringWithFormat:@"✓ %@", text] : text;
+}
+
+- (void)presentNoticeSheetWithTitle:(NSString *)title inView:(UIView *)host {
+    UIActionSheet *sheet = [[UIActionSheet alloc] initWithTitle:title
+                                                       delegate:self
+                                              cancelButtonTitle:@"确定"
+                                         destructiveButtonTitle:nil
+                                              otherButtonTitles:nil];
+    // No tag: the delegate ignores anything that is not one of the two pickers.
+    self.activeSheet = sheet;
+    [sheet showInView:host];
+}
+
+// The movie player is presented full-screen, so its own view is the right host:
+// the sheet then shares the player's window and orientation. Fall back to the
+// key window if the player view is not in a window yet.
+- (UIView *)sheetHostView {
+    UIView *playerView = self.activePlayerController.view;
+    if (playerView.window) return playerView;
+    UIWindow *window = [UIApplication sharedApplication].keyWindow;
+    if (!window) {
+        NSArray *windows = [UIApplication sharedApplication].windows;
+        window = windows.count ? windows[0] : nil;
+    }
+    return window;
+}
+
+- (void)dismissActiveSheet {
+    UIActionSheet *sheet = self.activeSheet;
+    if (!sheet) return;
+    self.activeSheet = nil;
+    // Drop the delegate first: this also runs from dealloc, and UIActionSheet
+    // holds its delegate unretained, so a dismissal callback would message a
+    // half-torn-down controller.
+    sheet.delegate = nil;
+    [sheet dismissWithClickedButtonIndex:sheet.cancelButtonIndex animated:NO];
+}
+
+#pragma mark - UIActionSheetDelegate
+
+- (void)actionSheet:(UIActionSheet *)actionSheet clickedButtonAtIndex:(NSInteger)buttonIndex {
+    if (buttonIndex == actionSheet.cancelButtonIndex) return;
+    if (actionSheet.tag == kAudioSheetTag) {
+        [self applyAudioSelection:buttonIndex];
+    } else if (actionSheet.tag == kSubtitleSheetTag) {
+        // Button 0 is "off" (-1); the streams start at button 1.
+        [self applySubtitleSelection:buttonIndex - 1];
+    }
+}
+
+- (void)actionSheet:(UIActionSheet *)actionSheet didDismissWithButtonIndex:(NSInteger)buttonIndex {
+    if (self.activeSheet == actionSheet) self.activeSheet = nil;
+}
+
+#pragma mark - Applying a Selection
+
+// Text subtitles are rendered locally by OESubtitleOverlayView, so switching
+// them needs no new stream from the server: the URL stays put and playback is
+// never interrupted. Image-based tracks the overlay cannot draw are filtered
+// out in parseStreamInfoFromMediaSources:, so everything in the list is
+// renderable here.
+- (void)applySubtitleSelection:(NSInteger)subtitleIndex {
+    if (subtitleIndex >= (NSInteger)self.subtitleStreams.count) return;
+    self.selectedSubtitleIndex = (subtitleIndex < 0) ? -1 : subtitleIndex;
+    NSLog(@"[OldEmby] selected subtitle index: %ld", (long)self.selectedSubtitleIndex);
+    if (self.selectedSubtitleIndex < 0) {
+        [self clearSubtitles];
+        return;
+    }
+    [self loadSubtitleForIndex:self.selectedSubtitleIndex];
+}
+
+// Audio is decided by the transcoder, so a new track means a new stream URL and
+// a re-buffer. Direct play hands over the original file untouched and has no
+// such knob.
+- (void)applyAudioSelection:(NSInteger)audioIndex {
+    if (audioIndex < 0 || audioIndex >= (NSInteger)self.audioStreams.count) return;
+    if (audioIndex == self.selectedAudioIndex) return;
     NSLog(@"[OldEmby] selected audio index: %ld", (long)audioIndex);
+    if (self.currentPlaybackIsDirect) {
+        [self showSubtitleNotice:@"直接播放模式下无法切换音轨"];
+        return;
+    }
     self.selectedAudioIndex = audioIndex;
-    [self switchStreamsWithNewAudio:audioIndex subtitle:self.selectedSubtitleIndex];
-}
-
-- (void)streamSelectionView:(OEStreamSelectionView *)view
-      didSelectSubtitleIndex:(NSInteger)subtitleIndex {
-    NSLog(@"[OldEmby] selected subtitle index: %ld", (long)subtitleIndex);
-    self.selectedSubtitleIndex = subtitleIndex;
-    [self switchStreamsWithNewAudio:self.selectedAudioIndex subtitle:subtitleIndex];
-}
-
-- (void)streamSelectionViewDidDismiss:(OEStreamSelectionView *)view {
-    self.streamSelectionView = nil;
+    [self reloadStreamWithAudioIndex:audioIndex];
 }
 
 #pragma mark - Stream Switching
 
-- (void)switchStreamsWithNewAudio:(NSInteger)audioIndex subtitle:(NSInteger)subtitleIndex {
-    // Only works for HLS transcode playback (not direct stream).
-    // For direct stream, we cannot switch audio/subtitle via URL params;
-    // the user would need to re-play with transcode mode.
-    if (self.currentPlaybackIsDirect) {
-        // For direct stream, we can still load external subtitles.
-        if (subtitleIndex >= 0 && subtitleIndex < (NSInteger)self.subtitleStreams.count) {
-            [self loadSubtitleForIndex:subtitleIndex];
-        } else {
-            [self clearSubtitles];
-        }
-        return;
-    }
-
-    // For HLS transcode, rebuild the URL with AudioStreamIndex and SubtitleStreamIndex.
+- (void)reloadStreamWithAudioIndex:(NSInteger)audioIndex {
     NSString *baseURL = self.activeStreamURLString;
     if (!baseURL.length) return;
 
-    OEEmbyAPIClient *client = [OEEmbyAPIClient sharedClient];
     NSInteger audioStreamIndex = -1;
     if (audioIndex >= 0 && audioIndex < (NSInteger)self.audioStreams.count) {
         OEStreamInfo *info = self.audioStreams[audioIndex];
         audioStreamIndex = [info.index integerValue];
     }
 
-    NSInteger subStreamIndex = -1;
-    if (subtitleIndex >= 0 && subtitleIndex < (NSInteger)self.subtitleStreams.count) {
-        OEStreamInfo *info = self.subtitleStreams[subtitleIndex];
-        subStreamIndex = [info.index integerValue];
-    }
-
-    NSString *newURL = [client streamURLWithAudioIndex:audioStreamIndex
-                                         subtitleIndex:subStreamIndex
-                                          fromBaseURL:baseURL
-                                               itemId:self.item.itemId];
+    // Subtitles stay out of the URL: passing SubtitleStreamIndex would make the
+    // server burn them into the video on top of the overlay we already draw.
+    NSString *newURL = [[OEEmbyAPIClient sharedClient] streamURLWithAudioIndex:audioStreamIndex
+                                                                subtitleIndex:-1
+                                                                  fromBaseURL:baseURL
+                                                                       itemId:self.item.itemId];
     if (!newURL.length) {
-        NSLog(@"[OldEmby] failed to rebuild stream URL with audio/subtitle index");
+        NSLog(@"[OldEmby] failed to rebuild stream URL with audio index");
         return;
     }
 
@@ -886,12 +1022,9 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
         });
     }
 
-    // Load external subtitle if selected (for display alongside burned-in subs).
-    if (subtitleIndex >= 0 && subtitleIndex < (NSInteger)self.subtitleStreams.count) {
-        [self loadSubtitleForIndex:subtitleIndex];
-    } else {
-        [self clearSubtitles];
-    }
+    // The already-parsed cues stay valid across an audio switch — only the
+    // ticking timer was stopped above, so bring it back.
+    if (self.parsedSubtitleCues.count) [self startSubtitleTimer];
 }
 
 #pragma mark - Subtitle Loading & Display
@@ -908,11 +1041,17 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
     OEStreamInfo *info = self.subtitleStreams[index];
     if (!info.index.length || !info.mediaSourceId.length) {
         NSLog(@"[OldEmby] cannot load subtitle: missing index or mediaSourceId");
+        [self showSubtitleNotice:@"该字幕缺少必要信息，无法加载"];
         return;
     }
 
     self.subtitleLoading = YES;
+    // Rapid switching can leave earlier requests in flight; only the newest
+    // one is allowed to install its cues.
+    NSUInteger generation = ++self.subtitleLoadGeneration;
     [self clearSubtitleTimer];
+    self.parsedSubtitleCues = nil;
+    [self showSubtitleNotice:@"正在加载字幕…"];
 
     OEEmbyAPIClient *client = [OEEmbyAPIClient sharedClient];
     NSInteger streamIdx = [info.index integerValue];
@@ -922,29 +1061,57 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
     // original text, so the parser auto-detects the actual format.
     NSString *format = @"srt";
 
+    __weak typeof(self) weakSelf = self;
     [client fetchSubtitleForItem:self.item.itemId
                    mediaSourceId:info.mediaSourceId
                      streamIndex:streamIdx
                           format:format
                       completion:^(id result, NSError *error) {
-        self.subtitleLoading = NO;
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || generation != strongSelf.subtitleLoadGeneration) return;
+        strongSelf.subtitleLoading = NO;
         if (error || ![result isKindOfClass:[NSString class]]) {
             NSLog(@"[OldEmby] subtitle fetch failed: %@", error);
+            [strongSelf showSubtitleNotice:@"字幕加载失败"];
             return;
         }
         NSString *subtitleText = (NSString *)result;
         if (!subtitleText.length) {
             NSLog(@"[OldEmby] subtitle text is empty");
+            [strongSelf showSubtitleNotice:@"服务器返回的字幕为空"];
             return;
         }
         // Auto-detect format and parse (handles SRT, VTT, ASS/SSA, LRC).
-        self.parsedSubtitleCues = [OESubtitleParser parse:subtitleText];
-        if (!self.parsedSubtitleCues.count) {
+        NSArray *cues = [OESubtitleParser parse:subtitleText];
+        if (!cues.count) {
             NSLog(@"[OldEmby] no cues parsed from subtitle text (format may be unsupported)");
+            [strongSelf showSubtitleNotice:@"字幕格式无法解析"];
             return;
         }
-        [self startSubtitleTimer];
+        NSLog(@"[OldEmby] parsed %lu subtitle cues", (unsigned long)cues.count);
+        strongSelf.parsedSubtitleCues = cues;
+        // Drop the "loading" notice so the first real cue is not overwritten.
+        ++strongSelf.subtitleNoticeGeneration;
+        [strongSelf.subtitleOverlay setSubtitleText:nil];
+        [strongSelf startSubtitleTimer];
     }];
+}
+
+// Status text borrows the subtitle overlay: it is the only surface visible over
+// the full-screen player. The cue ticker pauses for the duration so a notice is
+// not overwritten mid-sentence, then picks up again where the video is by then.
+- (void)showSubtitleNotice:(NSString *)text {
+    if (!self.subtitleOverlay || !text.length) return;
+    NSUInteger generation = ++self.subtitleNoticeGeneration;
+    [self clearSubtitleTimer];
+    [self.subtitleOverlay setSubtitleText:text];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kSubtitleNoticeDuration * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || generation != strongSelf.subtitleNoticeGeneration) return;
+        [strongSelf.subtitleOverlay setSubtitleText:nil];
+        if (strongSelf.parsedSubtitleCues.count) [strongSelf startSubtitleTimer];
+    });
 }
 
 - (void)startSubtitleTimer {
@@ -967,18 +1134,19 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
     if (!player) return;
     NSTimeInterval currentTime = 0;
     @try { currentTime = player.currentPlaybackTime; } @catch (NSException *e) { return; }
-    if (currentTime <= 0) return;
+    // currentPlaybackTime is NaN before the player has media loaded; a cue may
+    // legitimately start at 0, so only reject the unusable values.
+    if (isnan(currentTime) || currentTime < 0) return;
     OESubtitleCue *cue = [OESubtitleParser cueForTime:currentTime inCues:self.parsedSubtitleCues];
-    if (cue) {
-        [self.subtitleOverlay setSubtitleText:cue.text];
-    } else {
-        [self.subtitleOverlay setSubtitleText:nil];
-    }
+    [self.subtitleOverlay setSubtitleText:cue ? cue.text : nil];
 }
 
 - (void)clearSubtitles {
     [self clearSubtitleTimer];
+    ++self.subtitleLoadGeneration;
+    ++self.subtitleNoticeGeneration;
     self.parsedSubtitleCues = nil;
+    self.subtitleLoading = NO;
     if (self.subtitleOverlay) [self.subtitleOverlay setSubtitleText:nil];
 }
 
@@ -987,10 +1155,7 @@ static const NSTimeInterval kControlSyncInterval = 0.2;
     [self.controlSyncTimer invalidate];
     self.controlSyncTimer = nil;
     _systemVolumeView = nil;
-    if (_streamSelectionView) {
-        [_streamSelectionView dismiss];
-        _streamSelectionView = nil;
-    }
+    [self dismissActiveSheet];
     if (_overlayControlsView) {
         [_overlayControlsView removeFromSuperview];
         _overlayControlsView = nil;

@@ -13,6 +13,8 @@ static const CGFloat kSubtitleVerticalPadding = 8.0;
 
 @implementation OESubtitleOverlayView
 
+@synthesize bottomInset = _bottomInset;
+
 - (id)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.backgroundColor = [UIColor clearColor];
@@ -55,6 +57,12 @@ static const CGFloat kSubtitleVerticalPadding = 8.0;
     [self setNeedsLayout];
 }
 
+- (void)setBottomInset:(CGFloat)bottomInset {
+    if (_bottomInset == bottomInset) return;
+    _bottomInset = bottomInset;
+    [self setNeedsLayout];
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
 
@@ -78,7 +86,9 @@ static const CGFloat kSubtitleVerticalPadding = 8.0;
     CGFloat bgH = labelH + 2 * kSubtitleVerticalPadding;
 
     CGFloat bgX = (selfW - bgW) / 2.0;
-    CGFloat bgY = selfH - bgH - kSubtitleBottomMargin;
+    CGFloat bgY = selfH - bgH - kSubtitleBottomMargin - _bottomInset;
+    // Never push the text off the top edge on a very short player view.
+    if (bgY < 0) bgY = 0;
 
     _bgView.frame = CGRectMake(bgX, bgY, bgW, bgH);
     _label.frame = CGRectMake(bgX + kSubtitleHorizontalPadding,
