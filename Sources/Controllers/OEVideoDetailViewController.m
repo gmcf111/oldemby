@@ -24,6 +24,7 @@ static const CGFloat kDetailCoverMaxHeight = 200.0;
 static const CGFloat kCastStripHeight = 132.0;
 static const CGFloat kOverlayButtonSize = 32.0;
 static const CGFloat kOverlayBottomMargin = 48.0; // fallback: above the system control bar
+static const CGFloat kOverlaySideMargin = 6.0; // fallback: left/right edge margin
 static const CGFloat kOverlayButtonGap = 8.0; // gap between volume slider and buttons
 static const CGFloat kTransportButtonWidth = 40.0;
 static const CGFloat kTransportButtonHeight = 32.0;
@@ -741,10 +742,28 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
         _systemControlBar = bar;
         _transportClusterLogged = NO;
     }
+    BOOL visible = [self systemControlsVisible:volumeView playerView:playerView];
+
     if (bar) {
+        // Buttons live inside the system control bar: they inherit its
+        // fade/slide/hide automatically, so there is no separate visibility
+        // logic for them here.
         [self attachControlBarButtons];
         [self updateTransportClusterInBar:bar];
         [self layoutControlBarButtons];
+    } else {
+        // Fallback: the bar could not be located, so host the buttons on the
+        // player view and track the system bar's visibility ourselves. This is
+        // only the safety net; the normal path above needs no sync logic.
+        [self attachFallbackButtonsToView:playerView];
+        [self layoutFallbackButtonsInView:playerView volumeView:volumeView];
+        CGFloat alpha = visible ? 1.0 : 0.0;
+        _audioButton.alpha = alpha;
+        _subtitleButton.alpha = alpha;
+        _prevEpisodeButton.alpha = alpha;
+        _nextEpisodeButton.alpha = alpha;
+        _skipBackButton.alpha = alpha;
+        _skipForwardButton.alpha = alpha;
     }
 
     // The subtitle inset still needs the bar's visibility and position.
@@ -752,7 +771,6 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
     if (volumeView) {
         volumeFrame = [volumeView convertRect:volumeView.bounds toView:_subtitleOverlay];
     }
-    BOOL visible = [self systemControlsVisible:volumeView playerView:playerView];
     if (visible != _overlayControlsVisible || !CGRectEqualToRect(volumeFrame, _lastVolumeFrame)) {
         _overlayControlsVisible = visible;
         _lastVolumeFrame = volumeFrame;
@@ -764,6 +782,54 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
     if (playerView.subviews.lastObject != _subtitleOverlay) {
         [playerView bringSubviewToFront:_subtitleOverlay];
     }
+}
+
+// Attach the six buttons to the player view when the system control bar could
+// not be found, so the controls stay available as a last resort.
+- (void)attachFallbackButtonsToView:(UIView *)view {
+    NSArray *buttons = [NSArray arrayWithObjects:_audioButton, _subtitleButton,
+                        _prevEpisodeButton, _skipBackButton, _skipForwardButton,
+                        _nextEpisodeButton, nil];
+    for (UIButton *button in buttons) {
+        if (button.superview != view) [view addSubview:button];
+        button.hidden = NO;
+    }
+}
+
+// Fallback layout on the player view: audio/subtitle flanking the volume
+// slider if present, else the screen corners; transport buttons packed at the
+// bottom-left so they never overlap the volume slider.
+- (void)layoutFallbackButtonsInView:(UIView *)view volumeView:(UIView *)volumeView {
+    CGFloat w = view.bounds.size.width;
+    CGFloat h = view.bounds.size.height;
+    if (w < 1 || h < 1) return;
+    CGFloat btnSize = kOverlayButtonSize;
+    CGFloat y = h - btnSize - kOverlayBottomMargin;
+    CGFloat audioX = kOverlaySideMargin;
+    CGFloat subtitleX = w - btnSize - kOverlaySideMargin;
+    if (volumeView) {
+        CGRect vf = [volumeView convertRect:volumeView.bounds toView:view];
+        if (!CGRectIsEmpty(vf)) {
+            y = CGRectGetMidY(vf) - btnSize / 2.0;
+            audioX = CGRectGetMinX(vf) - kOverlayButtonGap - btnSize;
+            subtitleX = CGRectGetMaxX(vf) + kOverlayButtonGap;
+        }
+    }
+    audioX = MAX(2.0, audioX);
+    subtitleX = MIN(w - btnSize - 2.0, subtitleX);
+    _audioButton.frame = CGRectMake(audioX, y, btnSize, btnSize);
+    _subtitleButton.frame = CGRectMake(subtitleX, y, btnSize, btnSize);
+
+    CGFloat tw = kTransportButtonWidth;
+    CGFloat th = kTransportButtonHeight;
+    CGFloat ty = y + (btnSize - th) / 2.0;
+    CGFloat step = tw + kTransportButtonGap;
+    CGFloat startX = 2.0;
+    _prevEpisodeButton.frame = CGRectMake(startX, ty, tw, th);
+    _skipBackButton.frame = CGRectMake(startX + step, ty, tw, th);
+    _skipForwardButton.frame = CGRectMake(startX + 2.0 * step, ty, tw, th);
+    _nextEpisodeButton.frame = CGRectMake(startX + 3.0 * step, ty, tw, th);
+    [self updateEpisodeButtonStates];
 }
 
 // Keep subtitle text clear of the system control bar while it is on screen.
@@ -814,34 +880,22 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
     _subtitleButton.hidden = NO;
 }
 
-// The timeline scrubber is the slider that is not the volume control.
-- (UIView *)findTimelineSliderInView:(UIView *)view {
-    for (UIView *sub in view.subviews) {
-        if (_systemVolumeView && (sub == _systemVolumeView || [sub isDescendantOfView:_systemVolumeView])) continue;
-        NSString *lc = [NSStringFromClass([sub class]) lowercaseString];
-        BOOL sliderish = [lc rangeOfString:@"slider"].location != NSNotFound ||
-                         [lc rangeOfString:@"scrubber"].location != NSNotFound;
-        if (sliderish && [lc rangeOfString:@"volume"].location == NSNotFound) return sub;
-        UIView *found = [self findTimelineSliderInView:sub];
-        if (found) return found;
-    }
-    return nil;
-}
-
-// Every system transport control on the bar: left of the timeline scrubber
-// and on the same horizontal band as the volume slider, so the top bar's
-// done button never qualifies even if the bar view spans the whole screen.
+// Every system transport control on the bar: the buttons left of the volume
+// slider and on its horizontal band. The volume slider is the reliable anchor
+// (it is always present and we already locate it); its left edge bounds the
+// cluster and its vertical centre marks the transport row. The timeline
+// scrubber cannot be used as the bound: on iOS 6-9 it sits on the row above
+// and spans nearly the whole width, so its left edge is ~0 and would exclude
+// every transport button — leaving an empty cluster and no play/pause anchor.
 - (NSArray *)transportClusterInBar:(UIView *)bar {
-    UIView *timeline = [self findTimelineSliderInView:bar];
-    CGFloat limitX = bar.bounds.size.width * 0.35;
-    if (timeline) {
-        CGRect timelineFrame = [timeline convertRect:timeline.bounds toView:bar];
-        limitX = CGRectGetMinX(timelineFrame);
-    }
+    CGFloat limitX = bar.bounds.size.width * 0.5;
     CGFloat rowMidY = -1;
     if (_systemVolumeView) {
         CGRect volumeFrame = [_systemVolumeView convertRect:_systemVolumeView.bounds toView:bar];
-        if (!CGRectIsEmpty(volumeFrame)) rowMidY = CGRectGetMidY(volumeFrame);
+        if (!CGRectIsEmpty(volumeFrame)) {
+            limitX = CGRectGetMinX(volumeFrame);
+            rowMidY = CGRectGetMidY(volumeFrame);
+        }
     }
     NSMutableArray *cluster = [NSMutableArray array];
     [self collectTransportControlsFromView:bar bar:bar limitX:limitX rowMidY:rowMidY into:cluster];
@@ -863,18 +917,25 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
     for (UIView *sub in view.subviews) {
         if ([self isOurControlBarButton:sub]) continue;
         if (_systemVolumeView && (sub == _systemVolumeView || [sub isDescendantOfView:_systemVolumeView])) continue;
-        if ([sub isKindOfClass:[UIControl class]]) {
-            NSString *lc = [NSStringFromClass([sub class]) lowercaseString];
-            if ([lc rangeOfString:@"slider"].location != NSNotFound ||
-                [lc rangeOfString:@"scrubber"].location != NSNotFound) continue;
-            CGRect frame = [sub convertRect:sub.bounds toView:bar];
-            if (frame.size.height < 20) continue;
-            if (CGRectGetMidX(frame) >= limitX) continue;
-            if (rowMidY > 0 && fabsf((float)(CGRectGetMidY(frame) - rowMidY)) > 60.0f) continue;
-            [out addObject:(UIControl *)sub];
+        // Gather anything button-like: UIControl subclasses, and views whose
+        // class name advertises a button (some private MP controls are plain
+        // UIView subclasses rather than UIControl).
+        NSString *lc = [NSStringFromClass([sub class]) lowercaseString];
+        BOOL buttonish = [sub isKindOfClass:[UIControl class]] ||
+                         [lc rangeOfString:@"button"].location != NSNotFound;
+        if (!buttonish) {
+            [self collectTransportControlsFromView:sub bar:bar limitX:limitX rowMidY:rowMidY into:out];
             continue;
         }
-        [self collectTransportControlsFromView:sub bar:bar limitX:limitX rowMidY:rowMidY into:out];
+        if ([lc rangeOfString:@"slider"].location != NSNotFound ||
+            [lc rangeOfString:@"scrubber"].location != NSNotFound) continue;
+        CGRect frame = [sub convertRect:sub.bounds toView:bar];
+        if (frame.size.height < 12 || frame.size.width < 12) continue;
+        if (CGRectGetMidX(frame) >= limitX) continue;
+        // Same row as the volume slider: filters out the scrubber row above
+        // and the top bar's Done button even if the bar view spans the screen.
+        if (rowMidY > 0 && fabsf((float)(CGRectGetMidY(frame) - rowMidY)) > 50.0f) continue;
+        [out addObject:(UIControl *)sub];
     }
 }
 
@@ -909,32 +970,56 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 }
 
 - (void)logTransportCluster:(NSArray *)cluster inBar:(UIView *)bar {
-    NSLog(@"[OldEmby] control bar %@ has %lu transport control(s):",
-          NSStringFromClass([bar class]), (unsigned long)cluster.count);
+    NSLog(@"[OldEmby] control bar %@ (%@) has %lu transport control(s):",
+          NSStringFromClass([bar class]), NSStringFromCGRect(bar.frame), (unsigned long)cluster.count);
     for (UIControl *control in cluster) {
         CGRect frame = [control convertRect:control.bounds toView:bar];
         NSLog(@"[OldEmby]   %@ label=%@ frame=%@ playPause=%d",
               NSStringFromClass([control class]), [control accessibilityLabel] ?: @"-",
               NSStringFromCGRect(frame), control == _systemPlayPauseButton);
     }
+    // When nothing was identified, dump the bar's subviews so the private
+    // hierarchy can be diagnosed from a debug build's console.
+    if (!cluster.count) {
+        NSLog(@"[OldEmby] bar %@ subviews:", NSStringFromClass([bar class]));
+        for (UIView *sub in bar.subviews) {
+            NSLog(@"[OldEmby]   %@ frame=%@ label=%@",
+                  NSStringFromClass([sub class]), NSStringFromCGRect(sub.frame),
+                  [sub accessibilityLabel] ?: @"-");
+        }
+    }
 }
 
-// Hide the system's own scan/skip buttons around play/pause: our four buttons
-// take their slots, and duplicated controls at the same spot look broken.
+// Identify the system play/pause button (our transport row's anchor) and hide
+// only the scan/skip buttons we are confident about. We never hide an
+// unlabelled button — if play/pause detection is wrong, hiding it would
+// remove play/pause entirely, which is worse than a duplicated control.
 - (void)updateTransportClusterInBar:(UIView *)bar {
     NSArray *cluster = [self transportClusterInBar:bar];
+
     UIControl *playPause = _systemPlayPauseButton;
     if (!playPause || !playPause.window || ![playPause isDescendantOfView:bar]) {
         playPause = [self playPauseButtonInCluster:cluster];
         _systemPlayPauseButton = playPause;
-        if (playPause && !_transportClusterLogged) {
+        if (!_transportClusterLogged) {
             _transportClusterLogged = YES;
             [self logTransportCluster:cluster inBar:bar];
         }
     }
-    if (!playPause) return;
+
+    // Only hide buttons whose accessibility label identifies them as scan /
+    // skip controls. Unlabelled buttons stay (one might be play/pause).
+    static NSArray *scanWords = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        scanWords = @[@"scan", @"seek", @"forward", @"backward", @"rewind",
+                      @"next", @"previous", @"skip",
+                      @"快进", @"快退", @"下一个", @"上一个", @"下一首", @"上一首"];
+    });
     for (UIControl *control in cluster) {
-        if (control != playPause) {
+        if (control == playPause) continue;
+        NSString *label = [[control accessibilityLabel] lowercaseString] ?: @"";
+        if ([self label:label matchesAny:scanWords]) {
             control.alpha = 0.0;
             control.userInteractionEnabled = NO;
         }
@@ -949,10 +1034,12 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 
     // Audio button on the left side of the volume slider, subtitle button on
     // the right side, both sitting directly on the system control bar.
+    CGFloat centerY = bar.bounds.size.height - kTransportButtonHeight / 2.0 - 2.0;
     if (_systemVolumeView) {
         CGRect volumeFrame = [_systemVolumeView convertRect:_systemVolumeView.bounds toView:bar];
         if (!CGRectIsEmpty(volumeFrame)) {
-            CGFloat y = CGRectGetMidY(volumeFrame) - kOverlayButtonSize / 2.0;
+            centerY = CGRectGetMidY(volumeFrame);
+            CGFloat y = centerY - kOverlayButtonSize / 2.0;
             CGFloat audioX = CGRectGetMinX(volumeFrame) - kOverlayButtonGap - kOverlayButtonSize;
             audioX = MAX(2.0, audioX);
             _audioButton.frame = CGRectMake(audioX, y, kOverlayButtonSize, kOverlayButtonSize);
@@ -964,9 +1051,9 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 
     // ±30s flank the play/pause button; previous/next episode sit further out.
     UIControl *playPause = _systemPlayPauseButton;
-    _skipBackButton.hidden = !playPause;
-    _skipForwardButton.hidden = !playPause;
     if (playPause) {
+        _skipBackButton.hidden = NO;
+        _skipForwardButton.hidden = NO;
         CGRect playFrame = [playPause convertRect:playPause.bounds toView:bar];
         CGFloat y = CGRectGetMidY(playFrame) - kTransportButtonHeight / 2.0;
         CGFloat backX = CGRectGetMinX(playFrame) - kTransportButtonGap - kTransportButtonWidth;
@@ -981,6 +1068,26 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
         CGFloat nextX = CGRectGetMaxX(_skipForwardButton.frame) + kTransportButtonGap;
         nextX = MIN(barWidth - kTransportButtonWidth - 2.0, nextX);
         _nextEpisodeButton.frame = CGRectMake(nextX, y, kTransportButtonWidth, kTransportButtonHeight);
+    } else {
+        // No play/pause anchor identified yet: pack the four transport buttons
+        // in a row just right of the system transport cluster (or at the bar's
+        // left edge if the cluster is empty), so they are always usable.
+        NSArray *cluster = [self transportClusterInBar:bar];
+        CGFloat startX = 2.0;
+        if (cluster.count) {
+            UIControl *rightmost = [cluster lastObject];
+            CGRect rf = [rightmost convertRect:rightmost.bounds toView:bar];
+            startX = CGRectGetMaxX(rf) + kTransportButtonGap;
+        }
+        CGFloat y = centerY - kTransportButtonHeight / 2.0;
+        CGFloat step = kTransportButtonWidth + kTransportButtonGap;
+        // [上一集][快退30][快进30][下一集]
+        _prevEpisodeButton.frame = CGRectMake(startX, y, kTransportButtonWidth, kTransportButtonHeight);
+        _skipBackButton.frame = CGRectMake(startX + step, y, kTransportButtonWidth, kTransportButtonHeight);
+        _skipForwardButton.frame = CGRectMake(startX + 2.0 * step, y, kTransportButtonWidth, kTransportButtonHeight);
+        _nextEpisodeButton.frame = CGRectMake(startX + 3.0 * step, y, kTransportButtonWidth, kTransportButtonHeight);
+        _skipBackButton.hidden = NO;
+        _skipForwardButton.hidden = NO;
     }
     [self updateEpisodeButtonStates];
 }
@@ -1465,8 +1572,10 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
     // currentPlaybackTime is NaN before the player has media loaded; a cue may
     // legitimately start at 0, so only reject the unusable values.
     if (isnan(currentTime) || currentTime < 0) return;
-    OESubtitleCue *cue = [OESubtitleParser cueForTime:currentTime inCues:self.parsedSubtitleCues];
-    [self.subtitleOverlay setSubtitleText:cue ? cue.text : nil];
+    // Join every active cue: ASS frequently has overlapping lines (a sign plus
+    // dialogue, two speakers, …) and showing only the first drops the rest.
+    NSString *activeText = [OESubtitleParser textForTime:currentTime inCues:self.parsedSubtitleCues];
+    [self.subtitleOverlay setSubtitleText:activeText];
 }
 
 - (void)clearSubtitles {

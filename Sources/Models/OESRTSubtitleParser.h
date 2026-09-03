@@ -33,6 +33,12 @@
 // Find the cue active at the given time. Returns nil if no cue matches.
 + (OESubtitleCue *)cueForTime:(NSTimeInterval)time inCues:(NSArray *)cues;
 
+// All cues active at the given time, joined into one multi-line string.
+// ASS commonly shows several lines at once (e.g. a sign and dialogue); the
+// single-cue lookup above drops everything but the first. Returns nil if
+// nothing is active.
++ (NSString *)textForTime:(NSTimeInterval)time inCues:(NSArray *)cues;
+
 @end
 
 // Backward-compatibility alias. Older code called OESRTSubtitleParser;

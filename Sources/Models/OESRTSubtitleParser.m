@@ -162,7 +162,10 @@ static NSString *stripASSOverrides(NSString *text) {
             while (i < len && [text characterAtIndex:i] != '}') i++;
             if (i < len) i++; // skip '}'
         } else if (c == '\\') {
-            // \N or \n → newline
+            // \N or \n → newline; \h → hard space. Other escapes (\b, \i, …)
+            // only appear inside {...} tags which are stripped above, so any
+            // backslash reaching here is one of these three; drop the slash
+            // for anything unrecognised rather than leaving a stray '\'.
             if (i + 1 < len) {
                 unichar next = [text characterAtIndex:i + 1];
                 if (next == 'N' || next == 'n') {
@@ -170,9 +173,13 @@ static NSString *stripASSOverrides(NSString *text) {
                     i += 2;
                     continue;
                 }
+                if (next == 'h' || next == 'H') {
+                    [result appendString:@" "];
+                    i += 2;
+                    continue;
+                }
             }
-            [result appendFormat:@"%c", c];
-            i++;
+            i++; // drop the backslash, keep the following character
         } else {
             [result appendFormat:@"%c", c];
             i++;
@@ -463,6 +470,13 @@ static NSString *stripASSOverrides(NSString *text) {
 + (NSArray *)parse:(NSString *)text {
     if (!text.length) return nil;
 
+    // Strip a UTF-8 BOM if present (Emby sometimes returns one with the
+    // raw subtitle text), otherwise the detection heuristics still match
+    // but the first section header carries a stray ﻿.
+    if ([text hasPrefix:@"﻿"]) {
+        text = [text substringFromIndex:1];
+    }
+
     // Normalize for inspection
     NSString *trimmed = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (!trimmed.length) return nil;
@@ -564,6 +578,18 @@ static NSString *stripASSOverrides(NSString *text) {
         if (time >= cue.startTime && time <= cue.endTime) return cue;
     }
     return nil;
+}
+
++ (NSString *)textForTime:(NSTimeInterval)time inCues:(NSArray *)cues {
+    if (!cues.count) return nil;
+    NSMutableArray *active = [NSMutableArray array];
+    for (OESubtitleCue *cue in cues) {
+        if (time >= cue.startTime && time <= cue.endTime) {
+            if (cue.text.length) [active addObject:cue.text];
+        }
+    }
+    if (!active.count) return nil;
+    return [active componentsJoinedByString:@"\n"];
 }
 
 @end
