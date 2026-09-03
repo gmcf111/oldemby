@@ -689,7 +689,12 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 
 - (UIButton *)controlBarButtonWithTitle:(NSString *)title action:(SEL)action {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    // Plain text on the control bar: no background, no border, no rounded
+    // square. Every background source is cleared so nothing can paint a box.
     button.backgroundColor = [UIColor clearColor];
+    button.opaque = NO;
+    button.layer.backgroundColor = [UIColor clearColor].CGColor;
+    button.layer.borderWidth = 0;
     button.titleLabel.font = [UIFont systemFontOfSize:10];
     button.titleLabel.numberOfLines = 2;
     button.titleLabel.textAlignment = NSTextAlignmentCenter;
