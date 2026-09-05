@@ -19,11 +19,13 @@
 // overlay. Landscape uses a two-pane layout (artwork left, info + lyrics
 // right); portrait stacks vertically.
 //
-// The bottom bar is a single native UIToolbar row: system rewind /
-// play-pause / fast-forward items, a stock UISlider for progress, an
-// MPVolumeView (omitted under 480pt where the row physically cannot fit),
-// and titled bar items for repeat mode, play queue and favorite — no
-// custom-drawn controls in the bar.
+// The bottom bar is a single row: an empty UIToolbar supplies the native bar
+// chrome, and every control is a direct subview positioned with manual
+// frames. Packing UISlider/MPVolumeView into UIBarButtonItem custom views
+// made them vanish on iOS 6 whenever the items overflowed the bar width;
+// direct subviews render reliably and line up on one shared centerline.
+// Sliders are stock native controls; buttons use drawn icons because iOS 6
+// has no system repeat/queue/heart glyphs.
 
 @interface OEMusicPlayerViewController ()
 @property (nonatomic, strong) UIImageView *backgroundImageView;
@@ -40,16 +42,16 @@
 @property (nonatomic, strong) NSArray *lyrics;
 @property (nonatomic, copy) NSString *lyricsItemId;
 @property (nonatomic, assign) NSInteger highlightedLyricsIndex;
-@property (nonatomic, strong) UIToolbar *bottomBar;
+@property (nonatomic, strong) UIView *bottomBar;
+@property (nonatomic, strong) UIToolbar *bottomChrome;
+@property (nonatomic, strong) UIButton *previousButton;
+@property (nonatomic, strong) UIButton *playPauseButton;
+@property (nonatomic, strong) UIButton *nextButton;
 @property (nonatomic, strong) UISlider *progressSlider;
 @property (nonatomic, strong) MPVolumeView *volumeView;
-@property (nonatomic, strong) UIBarButtonItem *playPauseItem;
-// UIBarButtonItem does not expose its systemItem publicly; track it ourselves.
-@property (nonatomic, assign) UIBarButtonSystemItem playPauseSystemItem;
-@property (nonatomic, strong) UIBarButtonItem *repeatItem;
-@property (nonatomic, strong) UIBarButtonItem *queueItem;
-@property (nonatomic, strong) UIBarButtonItem *favoriteItem;
-@property (nonatomic, assign) CGFloat lastItemsWidth;
+@property (nonatomic, strong) UIButton *repeatButton;
+@property (nonatomic, strong) UIButton *queueButton;
+@property (nonatomic, strong) UIButton *favoriteButton;
 @property (nonatomic, assign) BOOL favoriteRequestInFlight;
 @property (nonatomic, strong) UILabel *timeLabel;
 @property (nonatomic, assign) BOOL seeking;
@@ -61,11 +63,14 @@
     // item/playlist are accepted for API compatibility but deliberately not
     // stored: opening the player must not start or restart playback.
     self = [super init];
-    if (self) {
-        _highlightedLyricsIndex = NSNotFound;
-        _playPauseSystemItem = UIBarButtonSystemItemPlay;
-    }
+    if (self) _highlightedLyricsIndex = NSNotFound;
     return self;
+}
+
+- (UIButton *)iconButtonWithAction:(SEL)action {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
 }
 
 - (void)viewDidLoad {
@@ -135,13 +140,25 @@
     self.lyricsEmptyLabel.backgroundColor = [UIColor clearColor];
     [self.lyricsTable addSubview:self.lyricsEmptyLabel];
 
-    // Single-row native toolbar: transport system items + stock slider +
-    // volume + titled repeat/queue/favorite items.
-    self.bottomBar = [[UIToolbar alloc] initWithFrame:CGRectZero];
+    // Bottom bar: chrome first, then controls as direct subviews.
+    self.bottomBar = [[UIView alloc] initWithFrame:CGRectZero];
     [self.view addSubview:self.bottomBar];
 
-    // Stock UISlider appearance: no tint overrides, this is the native look.
-    self.progressSlider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 200, 30)];
+    self.bottomChrome = [[UIToolbar alloc] initWithFrame:CGRectZero];
+    self.bottomChrome.items = @[];
+    [self.bottomBar addSubview:self.bottomChrome];
+
+    self.previousButton = [self iconButtonWithAction:@selector(previousTapped)];
+    [self.bottomBar addSubview:self.previousButton];
+    self.playPauseButton = [self iconButtonWithAction:@selector(playPauseTapped)];
+    self.playPauseButton.layer.cornerRadius = 19.0;
+    self.playPauseButton.clipsToBounds = YES;
+    [self.bottomBar addSubview:self.playPauseButton];
+    self.nextButton = [self iconButtonWithAction:@selector(nextTapped)];
+    [self.bottomBar addSubview:self.nextButton];
+
+    // Stock native slider — no tint overrides, iOS 6 glossy blue look.
+    self.progressSlider = [[UISlider alloc] initWithFrame:CGRectZero];
     self.progressSlider.minimumValue = 0.0;
     self.progressSlider.maximumValue = 1.0;
     self.progressSlider.continuous = YES;
@@ -150,18 +167,18 @@
     // Use a generous set of release events so the slider reliably commits
     // the seek even when the finger drags outside the track on iOS 6.
     [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit | UIControlEventTouchDragEnter];
+    [self.bottomBar addSubview:self.progressSlider];
 
-    self.volumeView = [[MPVolumeView alloc] initWithFrame:CGRectMake(0, 0, 64, 30)];
+    self.volumeView = [[MPVolumeView alloc] initWithFrame:CGRectZero];
     self.volumeView.showsRouteButton = NO;
+    [self.bottomBar addSubview:self.volumeView];
 
-    self.playPauseItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemPlay target:self action:@selector(playPauseTapped)];
-    self.repeatItem = [[UIBarButtonItem alloc] initWithTitle:@"顺序" style:UIBarButtonItemStylePlain target:self action:@selector(repeatTapped)];
-    // possibleTitles pre-sizes the item so mode/title changes do not make
-    // the whole bar reflow.
-    self.repeatItem.possibleTitles = [NSSet setWithObjects:@"顺序", @"循环", @"单曲", nil];
-    self.queueItem = [[UIBarButtonItem alloc] initWithTitle:@"队列" style:UIBarButtonItemStylePlain target:self action:@selector(queueTapped)];
-    self.favoriteItem = [[UIBarButtonItem alloc] initWithTitle:@"收藏" style:UIBarButtonItemStylePlain target:self action:@selector(favoriteTapped)];
-    self.favoriteItem.possibleTitles = [NSSet setWithObjects:@"收藏", @"已收藏", nil];
+    self.repeatButton = [self iconButtonWithAction:@selector(repeatTapped)];
+    [self.bottomBar addSubview:self.repeatButton];
+    self.queueButton = [self iconButtonWithAction:@selector(queueTapped)];
+    [self.bottomBar addSubview:self.queueButton];
+    self.favoriteButton = [self iconButtonWithAction:@selector(favoriteTapped)];
+    [self.bottomBar addSubview:self.favoriteButton];
 
     // "01:23 / 04:56" caption just above the bar.
     self.timeLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -188,48 +205,6 @@
     return [self respondsToSelector:@selector(topLayoutGuide)] ? 20.0 : 0.0;
 }
 
-#pragma mark - Bottom bar
-
-// Rebuilds the toolbar items for the current width. The slider and volume
-// are custom-view items; widths are baked into the item views, so rotation
-// requires a rebuild. Everything sits on one row; under 480pt the volume
-// slider is dropped because native-size items cannot physically fit 320pt.
-- (void)rebuildBarItemsForWidth:(CGFloat)w {
-    self.lastItemsWidth = w;
-    BOOL withVolume = w >= 480;
-    CGFloat textW = 3 * 52;         // 循环/队列/收藏 titled items
-    CGFloat transportW = 3 * 44;    // rewind / play-pause / fast-forward
-    CGFloat margins = 36;           // item padding + fixed spacers
-    CGFloat avail = w - textW - transportW - margins;
-    CGFloat volW = withVolume ? 64 : 0;
-    CGFloat sliderW = MIN(240, avail - volW - (withVolume ? 12 : 0));
-    sliderW = MAX(64, sliderW);
-    self.progressSlider.frame = CGRectMake(0, 0, sliderW, 30);
-    self.volumeView.frame = CGRectMake(0, 0, volW, 30);
-
-    UIBarButtonItem *rewind = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRewind target:self action:@selector(previousTapped)];
-    UIBarButtonItem *fastForward = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFastForward target:self action:@selector(nextTapped)];
-    UIBarButtonItem *sliderItem = [[UIBarButtonItem alloc] initWithCustomView:self.progressSlider];
-
-    UIBarButtonItem *(^flex)(void) = ^{
-        return [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
-    };
-    UIBarButtonItem *(^fixed)(CGFloat) = ^(CGFloat width) {
-        UIBarButtonItem *spacer = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
-        spacer.width = width;
-        return spacer;
-    };
-
-    // Flexible spaces at both ends center the whole group.
-    NSMutableArray *items = [NSMutableArray arrayWithObjects:flex(), rewind, fixed(4), self.playPauseItem, fixed(4), fastForward, fixed(8), sliderItem, nil];
-    if (withVolume) {
-        [items addObject:fixed(10)];
-        [items addObject:[[UIBarButtonItem alloc] initWithCustomView:self.volumeView]];
-    }
-    [items addObjectsFromArray:@[flex(), self.repeatItem, self.queueItem, self.favoriteItem, fixed(4)]];
-    [self.bottomBar setItems:items animated:NO];
-}
-
 - (void)applyTheme {
     self.view.backgroundColor = [OETheme libraryBackgroundColor];
     // The overlay keeps text readable over the blurred artwork; without
@@ -245,7 +220,8 @@
     self.timeLabel.textColor = [OETheme secondaryTextColor];
     self.lyricsTable.backgroundColor = [UIColor clearColor];
     self.lyricsEmptyLabel.textColor = [OETheme secondaryTextColor];
-    [OETheme applyToBarsInView:self.view];
+    self.playPauseButton.backgroundColor = [OETheme accentColor];
+    [OETheme applyToBarsInView:self.bottomBar];
     [self refresh];
     [self.lyricsTable reloadData];
 }
@@ -260,9 +236,8 @@
     self.blurOverlay.frame = self.view.bounds;
     self.collapseButton.frame = CGRectMake(4, topInset + 4, 44, 44);
 
-    CGFloat barH = 44;
-    self.bottomBar.frame = CGRectMake(0, h - barH, w, barH);
-    if (fabs(w - self.lastItemsWidth) > 0.5) [self rebuildBarItemsForWidth:w];
+    [self layoutBottomBarWithWidth:w height:h];
+    CGFloat barH = self.bottomBar.frame.size.height;
     self.timeLabel.frame = CGRectMake(0, h - barH - 16, w, 12);
     CGFloat bottomReserved = barH + 16 + 6;
 
@@ -272,6 +247,45 @@
         [self layoutPortraitWithWidth:w height:h topInset:topInset bottomReserved:bottomReserved];
     }
     self.lyricsEmptyLabel.frame = self.lyricsTable.bounds;
+}
+
+// One row, one centerline. Play sits exactly midway between prev and next
+// by construction (equal 4pt gaps around a 38pt button between 30pt ones).
+// The slider takes whatever width is left between the transport cluster and
+// the volume + aux cluster, capped so wide iPad rows don't stretch it.
+- (void)layoutBottomBarWithWidth:(CGFloat)w height:(CGFloat)h {
+    CGFloat barH = 56;
+    self.bottomBar.frame = CGRectMake(0, h - barH, w, barH);
+    self.bottomChrome.frame = self.bottomBar.bounds;
+    CGFloat cy = barH / 2.0;
+
+    CGFloat x = 8;
+    self.previousButton.frame = CGRectMake(x, cy - 15, 30, 30);
+    self.playPauseButton.frame = CGRectMake(x + 34, cy - 19, 38, 38);
+    self.nextButton.frame = CGRectMake(x + 76, cy - 15, 30, 30);
+    x += 112;
+
+    // Aux cluster from the trailing edge: repeat, queue, favorite.
+    CGFloat aux = 28, auxGap = 4;
+    CGFloat auxW = aux * 3 + auxGap * 2;
+    CGFloat rx = w - 8 - auxW;
+    self.repeatButton.frame = CGRectMake(rx, cy - aux / 2.0, aux, aux);
+    self.queueButton.frame = CGRectMake(rx + aux + auxGap, cy - aux / 2.0, aux, aux);
+    self.favoriteButton.frame = CGRectMake(rx + (aux + auxGap) * 2, cy - aux / 2.0, aux, aux);
+
+    CGFloat volW = w >= 480 ? 64 : 36;
+    CGFloat vx = rx - 6 - volW;
+    // MPVolumeView centers its inner slider inside its frame; give it the
+    // full row height so its track lands on the same centerline as the
+    // progress slider instead of riding high or low.
+    self.volumeView.frame = CGRectMake(vx, 0, volW, barH);
+
+    // Center the capped slider inside the space between the clusters so wide
+    // iPad rows don't leave it hugging the transport buttons.
+    CGFloat avail = vx - 6 - x;
+    CGFloat sliderW = MIN(240, avail);
+    CGFloat sx = x + (avail - sliderW) / 2.0;
+    self.progressSlider.frame = CGRectMake(sx, cy - 15, MAX(48, sliderW), 30);
 }
 
 - (void)layoutPortraitWithWidth:(CGFloat)w height:(CGFloat)h topInset:(CGFloat)topInset bottomReserved:(CGFloat)bottomReserved {
@@ -413,25 +427,29 @@
     OETranscodeSettings *settings = [OETranscodeSettings sharedSettings];
     self.badgeLabel.text = settings.directPlay ? @"直连" : [NSString stringWithFormat:@"%ldk", (long)(settings.maxAudioBitrate / 1000)];
 
-    UIBarButtonSystemItem wanted = manager.isPlaying ? UIBarButtonSystemItemPause : UIBarButtonSystemItemPlay;
-    if (self.playPauseSystemItem != wanted) {
-        self.playPauseSystemItem = wanted;
-        self.playPauseItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:wanted target:self action:@selector(playPauseTapped)];
-        if (self.lastItemsWidth > 0) [self rebuildBarItemsForWidth:self.lastItemsWidth];
-    }
+    OEIconType primary = manager.isPlaying ? OEIconTypePause : OEIconTypePlay;
+    [self.playPauseButton setImage:[OEIconFactory imageForIconType:primary size:CGSizeMake(20, 20) color:[UIColor whiteColor]] forState:UIControlStateNormal];
+    [self.previousButton setImage:[OEIconFactory imageForIconType:OEIconTypePrevious size:CGSizeMake(18, 18) color:[OETheme primaryTextColor]] forState:UIControlStateNormal];
+    [self.nextButton setImage:[OEIconFactory imageForIconType:OEIconTypeNext size:CGSizeMake(18, 18) color:[OETheme primaryTextColor]] forState:UIControlStateNormal];
 
-    switch (manager.repeatMode) {
-        case OEMusicRepeatModeAll: self.repeatItem.title = @"循环"; break;
-        case OEMusicRepeatModeOne: self.repeatItem.title = @"单曲"; break;
-        default: self.repeatItem.title = @"顺序"; break;
-    }
-    self.favoriteItem.title = item.favorite ? @"已收藏" : @"收藏";
-
+    UIColor *repeatColor = manager.repeatMode == OEMusicRepeatModeOff ? [OETheme secondaryTextColor] : [OETheme accentColor];
+    OEIconType repeatIcon = manager.repeatMode == OEMusicRepeatModeOne ? OEIconTypeRepeatOne : OEIconTypeRepeat;
+    [self.repeatButton setImage:[OEIconFactory imageForIconType:repeatIcon size:CGSizeMake(19, 19) color:repeatColor] forState:UIControlStateNormal];
+    [self.queueButton setImage:[OEIconFactory imageForIconType:OEIconTypeList size:CGSizeMake(19, 19) color:[OETheme secondaryTextColor]] forState:UIControlStateNormal];
+    [self updateFavoriteButton];
     [self.collapseButton setImage:[OEIconFactory imageForIconType:OEIconTypeChevronDown size:CGSizeMake(24, 24) color:[OETheme secondaryTextColor]] forState:UIControlStateNormal];
 
     [self requestLyricsForItemIfNeeded:item];
     [self refreshProgress];
     [self.view setNeedsLayout];
+}
+
+- (void)updateFavoriteButton {
+    OEEmbyItem *item = [OEMusicPlaybackManager sharedManager].currentItem;
+    BOOL fav = item.favorite;
+    OEIconType icon = fav ? OEIconTypeHeartFilled : OEIconTypeHeart;
+    UIColor *color = fav ? [OETheme accentColor] : [OETheme secondaryTextColor];
+    [self.favoriteButton setImage:[OEIconFactory imageForIconType:icon size:CGSizeMake(19, 19) color:color] forState:UIControlStateNormal];
 }
 
 - (void)requestLyricsForItemIfNeeded:(OEEmbyItem *)item {
@@ -523,18 +541,20 @@
     if (!item.itemId.length || self.favoriteRequestInFlight) return;
     BOOL target = !item.favorite;
     self.favoriteRequestInFlight = YES;
-    // Optimistic title flip; reverted if the server call fails.
-    self.favoriteItem.title = target ? @"已收藏" : @"收藏";
+    // Optimistic icon flip; reverted if the server call fails.
+    OEIconType optimisticIcon = target ? OEIconTypeHeartFilled : OEIconTypeHeart;
+    UIColor *optimisticColor = target ? [OETheme accentColor] : [OETheme secondaryTextColor];
+    [self.favoriteButton setImage:[OEIconFactory imageForIconType:optimisticIcon size:CGSizeMake(19, 19) color:optimisticColor] forState:UIControlStateNormal];
     __weak typeof(self) weakSelf = self;
     [[OEEmbyAPIClient sharedClient] setItem:item.itemId favorite:target completion:^(id result, NSError *error) {
         weakSelf.favoriteRequestInFlight = NO;
         if (error) {
-            weakSelf.favoriteItem.title = item.favorite ? @"已收藏" : @"收藏";
+            [weakSelf updateFavoriteButton];
             [OEErrorAlertView showWithTitle:target ? @"收藏失败" : @"取消收藏失败" error:error];
             return;
         }
         item.favorite = target;
-        if (manager.currentItem == item) weakSelf.favoriteItem.title = target ? @"已收藏" : @"收藏";
+        if (manager.currentItem == item) [weakSelf updateFavoriteButton];
     }];
 }
 
