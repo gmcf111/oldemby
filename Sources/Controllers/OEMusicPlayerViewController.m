@@ -10,16 +10,26 @@
 #import "Views/OEErrorAlertView.h"
 #import "Constants.h"
 #import <MediaPlayer/MediaPlayer.h>
+#import <CoreImage/CoreImage.h>
 #import <math.h>
 
 // Full-screen music player presented modally (cover-vertical, sliding up over
 // the mini player). Layout follows the QQ Music reference: collapse chevron
 // top-left, title/artist/quality badge, large artwork with a favorite button,
-// scrolling lyrics, and a bottom transport bar with prev/play/next, progress
-// slider, volume, repeat mode and play queue. Landscape uses a two-pane
-// layout (artwork left, info + lyrics right); portrait stacks vertically.
+// scrolling lyrics, and a bottom transport area. The background is the
+// artwork blurred through Core Image (UIVisualEffectView is iOS 8+, so the
+// blur is baked into a thumbnail offline) under a translucent theme overlay.
+//
+// The bottom area is two rows: a native UIToolbar carrying the system
+// rewind / play-pause / fast-forward items (plus repeat and queue, which have
+// no system equivalents), then a row with the progress slider and the
+// MPVolumeView sharing the same vertical centerline. Landscape uses a
+// two-pane layout (artwork left, info + lyrics right); portrait stacks.
 
 @interface OEMusicPlayerViewController ()
+@property (nonatomic, strong) UIImageView *backgroundImageView;
+@property (nonatomic, strong) UIView *blurOverlay;
+@property (nonatomic, strong) UIImage *blurredSourceImage;
 @property (nonatomic, strong) UIButton *collapseButton;
 @property (nonatomic, strong) UIImageView *artworkView;
 @property (nonatomic, strong) UILabel *titleLabel;
@@ -34,10 +44,8 @@
 @property (nonatomic, copy) NSString *lyricsItemId;
 @property (nonatomic, assign) NSInteger highlightedLyricsIndex;
 @property (nonatomic, strong) UIView *bottomBar;
-@property (nonatomic, strong) UIView *bottomSeparator;
-@property (nonatomic, strong) UIButton *playPauseButton;
-@property (nonatomic, strong) UIButton *previousButton;
-@property (nonatomic, strong) UIButton *nextButton;
+@property (nonatomic, strong) UIToolbar *transportBar;
+@property (nonatomic, assign) UIBarButtonSystemItem playPauseSystemItem;
 @property (nonatomic, strong) UISlider *progressSlider;
 @property (nonatomic, strong) UILabel *timeLabel;
 @property (nonatomic, strong) MPVolumeView *volumeView;
@@ -52,13 +60,25 @@
     // item/playlist are accepted for API compatibility but deliberately not
     // stored: opening the player must not start or restart playback.
     self = [super init];
-    if (self) _highlightedLyricsIndex = NSNotFound;
+    if (self) {
+        _highlightedLyricsIndex = NSNotFound;
+        _playPauseSystemItem = UIBarButtonSystemItemPlay;
+    }
     return self;
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     [OETheme prepareViewController:self];
+
+    // Frosted backdrop: blurred artwork, aspect-fill, dimmed by the overlay.
+    self.backgroundImageView = [[UIImageView alloc] initWithFrame:CGRectZero];
+    self.backgroundImageView.contentMode = UIViewContentModeScaleAspectFill;
+    self.backgroundImageView.clipsToBounds = YES;
+    [self.view addSubview:self.backgroundImageView];
+
+    self.blurOverlay = [[UIView alloc] initWithFrame:CGRectZero];
+    [self.view addSubview:self.blurOverlay];
 
     self.artworkView = [[UIImageView alloc] initWithFrame:CGRectZero];
     self.artworkView.contentMode = UIViewContentModeScaleAspectFit;
@@ -121,21 +141,22 @@
     self.bottomBar = [[UIView alloc] initWithFrame:CGRectZero];
     [self.view addSubview:self.bottomBar];
 
-    self.bottomSeparator = [[UIView alloc] initWithFrame:CGRectZero];
-    [self.bottomBar addSubview:self.bottomSeparator];
+    // Row 1: native toolbar with system transport items.
+    self.transportBar = [[UIToolbar alloc] initWithFrame:CGRectZero];
+    [self.bottomBar addSubview:self.transportBar];
 
-    self.previousButton = [self circularButton];
-    [self.previousButton addTarget:self action:@selector(previousTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.bottomBar addSubview:self.previousButton];
+    // Repeat and queue have no system bar-button equivalents; keep the drawn
+    // icons but host them inside the toolbar like the native items.
+    self.repeatButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.repeatButton.frame = CGRectMake(0, 0, 32, 32);
+    [self.repeatButton addTarget:self action:@selector(repeatTapped) forControlEvents:UIControlEventTouchUpInside];
 
-    self.playPauseButton = [self circularButton];
-    [self.playPauseButton addTarget:self action:@selector(playPauseTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.bottomBar addSubview:self.playPauseButton];
+    self.queueButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.queueButton.frame = CGRectMake(0, 0, 32, 32);
+    [self.queueButton addTarget:self action:@selector(queueTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self rebuildTransportItems];
 
-    self.nextButton = [self circularButton];
-    [self.nextButton addTarget:self action:@selector(nextTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.bottomBar addSubview:self.nextButton];
-
+    // Row 2: progress slider and volume slider on one centerline.
     self.progressSlider = [[UISlider alloc] initWithFrame:CGRectZero];
     self.progressSlider.minimumValue = 0.0;
     self.progressSlider.maximumValue = 1.0;
@@ -147,25 +168,16 @@
     [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit | UIControlEventTouchDragEnter];
     [self.bottomBar addSubview:self.progressSlider];
 
-    // "01:23 / 04:56" sits just above the bar; the bar itself is too narrow
-    // for flanking labels on 320pt screens.
+    self.volumeView = [[MPVolumeView alloc] initWithFrame:CGRectZero];
+    self.volumeView.showsRouteButton = NO;
+    [self.bottomBar addSubview:self.volumeView];
+
+    // "01:23 / 04:56" sits just above the transport area.
     self.timeLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.timeLabel.font = [UIFont systemFontOfSize:10];
     self.timeLabel.textAlignment = NSTextAlignmentCenter;
     self.timeLabel.backgroundColor = [UIColor clearColor];
     [self.view addSubview:self.timeLabel];
-
-    self.volumeView = [[MPVolumeView alloc] initWithFrame:CGRectZero];
-    self.volumeView.showsRouteButton = NO;
-    [self.bottomBar addSubview:self.volumeView];
-
-    self.repeatButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    [self.repeatButton addTarget:self action:@selector(repeatTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.bottomBar addSubview:self.repeatButton];
-
-    self.queueButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    [self.queueButton addTarget:self action:@selector(queueTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.bottomBar addSubview:self.queueButton];
 
     // Added last so no content can cover the collapse target.
     self.collapseButton = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -174,15 +186,9 @@
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:kNotificationMusicPlaybackStateChanged object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshProgress) name:kNotificationMusicPlaybackProgressChanged object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyThemeAndRefresh) name:kNotificationThemeDidChange object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applyTheme) name:kNotificationThemeDidChange object:nil];
     [self applyTheme];
     [self refresh];
-}
-
-- (UIButton *)circularButton {
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-    button.layer.borderWidth = 1.0;
-    return button;
 }
 
 // On iOS 7+ the modally presented view extends under the transparent status
@@ -191,9 +197,28 @@
     return [self respondsToSelector:@selector(topLayoutGuide)] ? 20.0 : 0.0;
 }
 
+- (void)rebuildTransportItems {
+    UIBarButtonItem *rewind = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRewind target:self action:@selector(previousTapped)];
+    UIBarButtonItem *playPause = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:self.playPauseSystemItem target:self action:@selector(playPauseTapped)];
+    UIBarButtonItem *fastForward = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFastForward target:self action:@selector(nextTapped)];
+    UIBarButtonItem *flexA = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    UIBarButtonItem *flexB = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    UIBarButtonItem *gapA = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
+    gapA.width = 20;
+    UIBarButtonItem *gapB = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
+    gapB.width = 20;
+    UIBarButtonItem *repeatItem = [[UIBarButtonItem alloc] initWithCustomView:self.repeatButton];
+    UIBarButtonItem *queueItem = [[UIBarButtonItem alloc] initWithCustomView:self.queueButton];
+    [self.transportBar setItems:@[flexA, rewind, gapA, playPause, gapB, fastForward, flexB, repeatItem, queueItem] animated:NO];
+}
+
 - (void)applyTheme {
     self.view.backgroundColor = [OETheme libraryBackgroundColor];
-    self.artworkView.backgroundColor = [OETheme imagePlaceholderColor];
+    // The overlay keeps text readable over the blurred artwork; without
+    // artwork the plain background color shows through instead.
+    self.blurOverlay.backgroundColor = [OETheme isLight] ? [UIColor colorWithWhite:1.0 alpha:0.55]
+                                                         : [UIColor colorWithWhite:0.0 alpha:0.55];
+    self.artworkView.backgroundColor = [UIColor clearColor];
     self.titleLabel.textColor = [OETheme primaryTextColor];
     self.artistLabel.textColor = [OETheme secondaryTextColor];
     self.badgeLabel.textColor = [OETheme accentColor];
@@ -204,18 +229,10 @@
     self.progressSlider.maximumTrackTintColor = [OETheme separatorColor];
     self.lyricsTable.backgroundColor = [UIColor clearColor];
     self.lyricsEmptyLabel.textColor = [OETheme secondaryTextColor];
-    self.bottomBar.backgroundColor = [OETheme navigationBarColor];
-    self.bottomSeparator.backgroundColor = [OETheme separatorColor];
-    for (UIButton *button in @[self.previousButton, self.playPauseButton, self.nextButton]) {
-        button.layer.borderColor = [OETheme separatorColor].CGColor;
-        button.backgroundColor = button == self.playPauseButton ? [OETheme accentColor] : [UIColor clearColor];
-    }
+    self.bottomBar.backgroundColor = [UIColor clearColor];
+    [OETheme applyToBarsInView:self.bottomBar];
     [self refresh];
     [self.lyricsTable reloadData];
-}
-
-- (void)applyThemeAndRefresh {
-    [self applyTheme];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -224,38 +241,28 @@
     CGFloat h = self.view.bounds.size.height;
     CGFloat topInset = [self topInset];
 
+    self.backgroundImageView.frame = self.view.bounds;
+    self.blurOverlay.frame = self.view.bounds;
     self.collapseButton.frame = CGRectMake(4, topInset + 4, 44, 44);
 
-    // Bottom transport bar + time readout above it.
-    CGFloat barH = 64;
+    // Bottom area: 44pt toolbar row + 40pt slider row, time readout above.
+    CGFloat toolbarH = 44, sliderRowH = 40;
+    CGFloat barH = toolbarH + sliderRowH;
     self.bottomBar.frame = CGRectMake(0, h - barH, w, barH);
-    self.bottomSeparator.frame = CGRectMake(0, 0, w, 0.5);
-    self.timeLabel.frame = CGRectMake(0, h - barH - 18, w, 13);
-    CGFloat bottomReserved = barH + 18 + 6;
+    self.transportBar.frame = CGRectMake(0, 0, w, toolbarH);
+    self.timeLabel.frame = CGRectMake(0, h - barH - 16, w, 12);
+    CGFloat bottomReserved = barH + 16 + 6;
 
-    // Bar contents (in bottomBar coordinates): prev/play/next on the left,
-    // volume + repeat + queue on the right, slider stretched between.
-    CGFloat pad = 8, gap = 6;
-    CGFloat cy = barH / 2.0;
-    CGFloat small = 34, large = 46;
-    CGFloat x = pad;
-    self.previousButton.frame = CGRectMake(x, cy - small / 2.0, small, small); x += small + gap;
-    self.playPauseButton.frame = CGRectMake(x, cy - large / 2.0, large, large); x += large + gap;
-    self.nextButton.frame = CGRectMake(x, cy - small / 2.0, small, small); x += small + gap;
-    self.previousButton.layer.cornerRadius = small / 2.0;
-    self.nextButton.layer.cornerRadius = small / 2.0;
-    self.playPauseButton.layer.cornerRadius = large / 2.0;
-    CGFloat aux = 30;
-    CGFloat rx = w - pad - aux;
-    self.queueButton.frame = CGRectMake(rx, cy - aux / 2.0, aux, aux);
-    rx -= gap + aux;
-    self.repeatButton.frame = CGRectMake(rx, cy - aux / 2.0, aux, aux);
-    rx -= gap;
-    CGFloat volW = w >= 480 ? 90 : 40;
-    rx -= volW;
-    self.volumeView.frame = CGRectMake(rx, cy - 15, volW, 30);
-    rx -= gap;
-    self.progressSlider.frame = CGRectMake(x, cy - 15, MAX(48, rx - x), 30);
+    // Progress + volume on the same centerline, capped slider width, the
+    // pair centered as a group so wide screens don't stretch the track.
+    CGFloat volW = w >= 480 ? 90 : 56;
+    CGFloat gap = 12;
+    CGFloat sliderW = MIN(240, w - volW - gap * 2 - 24);
+    CGFloat groupW = sliderW + gap + volW;
+    CGFloat sx = (w - groupW) / 2.0;
+    CGFloat rowCY = toolbarH + sliderRowH / 2.0;
+    self.progressSlider.frame = CGRectMake(sx, rowCY - 15, sliderW, 30);
+    self.volumeView.frame = CGRectMake(sx + sliderW + gap, rowCY - 15, volW, 30);
 
     if (w > h) {
         [self layoutLandscapeWithWidth:w height:h topInset:topInset bottomReserved:bottomReserved];
@@ -320,6 +327,63 @@
     return y + 20;
 }
 
+#pragma mark - Blurred background
+
+// Renders the artwork into a small thumbnail, clamps its edges, and applies
+// a Gaussian blur. Blurring ~72px is cheap even on an iPhone 4, and once the
+// image view scales it back up the result is indistinguishable from blurring
+// the full-size cover. Runs on a background queue.
+- (UIImage *)blurredImageFromImage:(UIImage *)image {
+    if (!image) return nil;
+    CGSize size = image.size;
+    if (size.width < 1 || size.height < 1) return nil;
+    CGFloat scale = 72.0 / MAX(size.width, size.height);
+    CGSize thumb = CGSizeMake(MAX(1, floorf(size.width * scale)), MAX(1, floorf(size.height * scale)));
+    UIGraphicsBeginImageContextWithOptions(thumb, YES, 1.0);
+    [image drawInRect:CGRectMake(0, 0, thumb.width, thumb.height)];
+    UIImage *small = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (!small) return nil;
+    // CIGaussianBlur and CIAffineClamp are both iOS 6.0+; if either is
+    // missing, fall back to the plain thumbnail (the overlay still dims it).
+    CIFilter *clamp = [CIFilter filterWithName:@"CIAffineClamp"];
+    CIFilter *blur = [CIFilter filterWithName:@"CIGaussianBlur"];
+    if (!clamp || !blur) return small;
+    CIImage *input = [[CIImage alloc] initWithImage:small];
+    [clamp setValue:input forKey:kCIInputImageKey];
+    [clamp setValue:[NSValue valueWithCGAffineTransform:CGAffineTransformIdentity] forKey:@"inputTransform"];
+    [blur setValue:clamp.outputImage forKey:kCIInputImageKey];
+    [blur setValue:@8.0 forKey:@"inputRadius"];
+    CIImage *output = blur.outputImage;
+    if (!output) return small;
+    CIContext *context = [CIContext contextWithOptions:nil];
+    CGImageRef cgImage = [context createCGImage:output fromRect:input.extent];
+    if (!cgImage) return small;
+    UIImage *result = [UIImage imageWithCGImage:cgImage];
+    CGImageRelease(cgImage);
+    return result;
+}
+
+- (void)updateBlurredBackground {
+    UIImage *artwork = [OEMusicPlaybackManager sharedManager].artwork;
+    if (artwork == self.blurredSourceImage) return;
+    self.blurredSourceImage = artwork;
+    if (!artwork) {
+        self.backgroundImageView.image = nil;
+        return;
+    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        UIImage *blurred = [self blurredImageFromImage:artwork];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            // A newer track may have replaced the artwork while blurring.
+            if (self.blurredSourceImage != artwork) return;
+            self.backgroundImageView.image = blurred;
+        });
+    });
+}
+
+#pragma mark - Refresh
+
 - (void)refresh {
     OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
     OEEmbyItem *item = manager.currentItem;
@@ -329,14 +393,16 @@
     BOOL transient = manager.state == OEMusicPlaybackStateLoading || manager.state == OEMusicPlaybackStateBuffering || manager.state == OEMusicPlaybackStateFailed;
     self.statusLabel.text = transient ? (manager.statusText ?: @"") : @"";
     self.artworkView.image = manager.artwork;
+    [self updateBlurredBackground];
 
     OETranscodeSettings *settings = [OETranscodeSettings sharedSettings];
     self.badgeLabel.text = settings.directPlay ? @"直连" : [NSString stringWithFormat:@"%ldk", (long)(settings.maxAudioBitrate / 1000)];
 
-    OEIconType primary = manager.isPlaying ? OEIconTypePause : OEIconTypePlay;
-    [self.playPauseButton setImage:[OEIconFactory imageForIconType:primary size:CGSizeMake(22, 22) color:[UIColor whiteColor]] forState:UIControlStateNormal];
-    [self.previousButton setImage:[OEIconFactory imageForIconType:OEIconTypePrevious size:CGSizeMake(18, 18) color:[OETheme primaryTextColor]] forState:UIControlStateNormal];
-    [self.nextButton setImage:[OEIconFactory imageForIconType:OEIconTypeNext size:CGSizeMake(18, 18) color:[OETheme primaryTextColor]] forState:UIControlStateNormal];
+    UIBarButtonSystemItem wanted = manager.isPlaying ? UIBarButtonSystemItemPause : UIBarButtonSystemItemPlay;
+    if (wanted != self.playPauseSystemItem) {
+        self.playPauseSystemItem = wanted;
+        [self rebuildTransportItems];
+    }
 
     UIColor *repeatColor = manager.repeatMode == OEMusicRepeatModeOff ? [OETheme secondaryTextColor] : [OETheme accentColor];
     OEIconType repeatIcon = manager.repeatMode == OEMusicRepeatModeOne ? OEIconTypeRepeatOne : OEIconTypeRepeat;
@@ -418,6 +484,8 @@
     return [NSString stringWithFormat:@"%02ld:%02ld", (long)(seconds / 60), (long)(seconds % 60)];
 }
 
+#pragma mark - Actions
+
 - (void)collapseTapped {
     // On iOS 6 sending dismiss to the presented VC forwards to the presenter.
     [self dismissViewControllerAnimated:YES completion:nil];
@@ -482,6 +550,8 @@
     }];
 }
 
+#pragma mark - Lyrics table
+
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.lyrics.count; }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -503,6 +573,8 @@
     cell.textLabel.font = current ? [UIFont boldSystemFontOfSize:14] : [UIFont systemFontOfSize:13];
     return cell;
 }
+
+#pragma mark - Visibility
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];

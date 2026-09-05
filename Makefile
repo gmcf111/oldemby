@@ -42,7 +42,7 @@ OldEmby_FILES = \
 	Sources/Views/OESubtitleOverlayView.m \
 	Sources/Views/OEErrorAlertView.m
 
-OldEmby_FRAMEWORKS = UIKit Foundation MediaPlayer AVFoundation CoreGraphics QuartzCore CoreMedia AudioToolbox MediaToolbox
+OldEmby_FRAMEWORKS = UIKit Foundation MediaPlayer AVFoundation CoreGraphics CoreImage QuartzCore CoreMedia AudioToolbox MediaToolbox
 OldEmby_PRIVATE_FRAMEWORKS =
 
 # iOS 6 compatibility: no NSURLSession, use NSURLConnection; frame layout, not AutoLayout-dependent
