@@ -26,6 +26,17 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 // Seasons of a series (GET /Shows/{seriesId}/Seasons).
 - (void)fetchSeasonsForSeries:(NSString *)seriesId completion:(OEAPICompletion)completion;
 
+// Search
+// GET /Users/{UserId}/Items with SearchTerm. `types` is an Emby
+// IncludeItemTypes list (e.g. @"Movie,Series,Episode" or
+// @"Audio,MusicAlbum,MusicArtist"); pass nil to search every type.
+// An empty/whitespace term short-circuits to an empty array without a request.
+- (void)searchItemsWithTerm:(NSString *)term
+                  itemTypes:(NSString *)types
+                 startIndex:(NSInteger)start
+                      limit:(NSInteger)limit
+                 completion:(OEAPICompletion)completion;
+
 // Playback
 - (void)fetchPlaybackInfoForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
 - (void)fetchStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;

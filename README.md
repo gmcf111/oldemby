@@ -6,6 +6,7 @@
 
 - **连接 Emby**: 服务器地址 + 用户名/密码登录（`POST /Users/AuthenticateByName`），`X-Emby-Authorization` 认证
 - **媒体库浏览**: 影视/剧集列表，封面 + 标题 + 时长，采用 `UITableView` 手动 frame 布局（避开 iOS 6 AutoLayout 缺陷）
+- **搜索**: 底部独立「搜索」Tab（与影视/音乐/设置平级），顶部可切换「影视 / 音乐」搜索范围，影视返回电影·剧集·单集，音乐返回歌曲·专辑·歌手
 - **视频播放**: `MPMoviePlayerViewController`（iOS 6-9 兼容最佳），流式 HLS/MP4
 - **音乐播放**: `AVPlayer` 流式音频 + `MPNowPlayingInfoCenter` 锁屏信息 + `UIBackgroundModes: audio` 后台 + `remoteControlReceivedWithEvent:` 耳机/锁屏控制
 - **强制转码 (默认)**: 720p H.264 4 Mbps，通过 `POST /Items/{Id}/PlaybackInfo` 的 `DeviceProfile.TranscodingProfiles` 与 `CodecProfiles` 强制服务器转码（`VideoCodec=h264`, `MaxVideoBitrate=4000000`, `MaxWidth=1280/MaxHeight=720`）
@@ -26,7 +27,7 @@ oldemby/
 │   └── gen_icons.py              # icon.svg → 各尺寸 PNG (Pillow)
 ├── Sources/
 │   ├── main.m
-│   ├── AppDelegate.h/m           # UIWindow + UITabBarController (视频/音乐/设置), AVAudioSession
+│   ├── AppDelegate.h/m           # UIWindow + UITabBarController (视频/音乐/设置/搜索), AVAudioSession
 │   ├── Constants.h               # NSUserDefaults keys, 默认转码参数
 │   ├── Controllers/
 │   │   ├── OELoginViewController      # 服务器登录 (NSURLConnection)
@@ -34,7 +35,8 @@ oldemby/
 │   │   ├── OEVideoDetailViewController# 详情 + MPMoviePlayerViewController 播放
 │   │   ├── OESettingsViewController   # 转码设置 (持久化)
 │   │   ├── OEMusicLibraryViewController # 音乐库 (Audio/MusicAlbum/MusicArtist)
-│   │   └── OEMusicPlayerViewController  # AVPlayer + MPNowPlayingInfoCenter + remoteControl
+│   │   ├── OEMusicPlayerViewController  # AVPlayer + MPNowPlayingInfoCenter + remoteControl
+│   │   └── OESearchViewController      # 搜索 (SearchTerm + 影视/音乐 范围切换)
 │   ├── Models/
 │   │   ├── OEServerConfig             # host/token/userId 持久化
 │   │   ├── OEEmbyItem                 # Emby Item 模型

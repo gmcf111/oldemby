@@ -17,6 +17,7 @@ OldEmby_FILES = \
 	Sources/Controllers/OEEpisodeListViewController.m \
 	Sources/Controllers/OESeasonListViewController.m \
 	Sources/Controllers/OESettingsViewController.m \
+	Sources/Controllers/OESearchViewController.m \
 	Sources/Controllers/OEMusicLibraryViewController.m \
 	Sources/Controllers/OEMusicPlayerViewController.m \
 	Sources/Controllers/OEMusicPlayQueueViewController.m \

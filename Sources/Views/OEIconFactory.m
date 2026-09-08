@@ -221,6 +221,18 @@
             }
             break;
         }
+        case OEIconTypeSearch: {
+            // Magnifier: ring + handle pointing to the bottom-right.
+            CGFloat cx = w * 0.44, cy = h * 0.42;
+            CGFloat r = w * 0.26;
+            CGContextSetLineWidth(ctx, MAX(1.6, w * 0.085));
+            CGContextStrokeEllipseInRect(ctx, CGRectMake(cx - r, cy - r, r * 2, r * 2));
+            CGContextBeginPath(ctx);
+            CGContextMoveToPoint(ctx, cx + r * 0.70, cy + r * 0.70);
+            CGContextAddLineToPoint(ctx, w * 0.86, h * 0.86);
+            CGContextStrokePath(ctx);
+            break;
+        }
     }
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();

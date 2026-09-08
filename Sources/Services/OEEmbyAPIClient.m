@@ -308,6 +308,32 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     }];
 }
 
+- (void)searchItemsWithTerm:(NSString *)term
+                  itemTypes:(NSString *)types
+                 startIndex:(NSInteger)start
+                      limit:(NSInteger)limit
+                 completion:(OEAPICompletion)completion {
+    OEServerConfig *c = [OEServerConfig sharedConfig];
+    if (!c.userId) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }
+    NSString *query = [term stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (!query.length) { if (completion) completion(@[], nil); return; }
+    NSString *path = [NSString stringWithFormat:@"/Users/%@/Items", c.userId];
+    NSMutableDictionary *p = [NSMutableDictionary dictionary];
+    p[@"SearchTerm"] = query;
+    if (types.length) p[@"IncludeItemTypes"] = types;
+    p[@"Recursive"] = @"true";
+    p[@"Fields"] = @"PrimaryImageAspectRatio,Overview,RunTimeTicks,MediaStreams,SeriesPrimaryImageTag,SeriesId";
+    p[@"ImageTypeLimit"] = @"1";
+    p[@"StartIndex"] = @(start).stringValue;
+    p[@"Limit"] = @(limit).stringValue;
+    // No SortBy: Emby ranks by relevance when SearchTerm is present, and an
+    // explicit sort would flatten that ordering.
+    [self GET:path params:p completion:^(id result, NSError *error){
+        if (error) { if (completion) completion(nil, error); return; }
+        [self parseItemsFromResult:result completion:completion];
+    }];
+}
+
 - (void)fetchSeasonsForSeries:(NSString *)seriesId completion:(OEAPICompletion)completion {
     OEServerConfig *c = [OEServerConfig sharedConfig];
     if (!c.userId) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"Not logged in"}]); return; }

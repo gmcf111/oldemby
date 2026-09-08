@@ -37,8 +37,8 @@ gh run watch <run-id>
 
 ## 架构
 
-- `Sources/main.m` 启动 `AppDelegate`。`AppDelegate` 配置后台音频、创建三个导航栈（影视、音乐、设置），并在没有保存的 host/token 时展示登录页。
-- `Sources/Controllers/` 是 UIKit 展示与导航层：影视库按目录/剧集/详情逐层浏览；音乐库选择音频后交给全局播放管理器；`OERootTabBarController` 负责音乐 Tab 中的迷你播放器和全屏播放器切换。
+- `Sources/main.m` 启动 `AppDelegate`。`AppDelegate` 配置后台音频、创建四个导航栈（影视、音乐、设置、搜索），并在没有保存的 host/token 时展示登录页。四个根模块彼此平级：各自独占一个 Tab 和一条 `UINavigationController`，互不嵌套。
+- `Sources/Controllers/` 是 UIKit 展示与导航层：影视库按目录/剧集/详情逐层浏览；音乐库选择音频后交给全局播放管理器；搜索页以 `SearchTerm` + `IncludeItemTypes` 区分影视与音乐两类结果并跳回各自的详情/播放链路；`OERootTabBarController` 负责音乐 Tab 中的迷你播放器和全屏播放器切换。
 - `Sources/Models/` 保存领域与持久化状态：`OEEmbyItem` 将 Emby JSON 映射为显示/导航模型；`OEServerConfig` 持久化服务器、用户和 token；`OETranscodeSettings` 持久化清晰度、音视频码率和直播放开关。默认策略为关闭直播放、720p H.264、4 Mbps 视频、192 kbps 音频。
 - `Sources/Services/OEEmbyAPIClient` 是所有 Emby HTTP 请求的唯一入口，负责认证、分页媒体查询、`PlaybackInfo` 与播放 URL。所有回调运行于主队列；请求和播放流程的改动应保留其现有错误处理与 URL 编码逻辑。
 - `OETranscodeBuilder` 将 `OETranscodeSettings` 转换为 `POST /Items/{Id}/PlaybackInfo` 的 DeviceProfile，并从响应选择转码或直流 URL。强制转码模式必须保持禁用 direct play/direct stream，确保服务器实际转为设备可解码的流。

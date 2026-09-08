@@ -13,7 +13,8 @@ typedef NS_ENUM(NSInteger, OEIconType) {
     OEIconTypeHeartFilled,
     OEIconTypeRepeat,
     OEIconTypeRepeatOne,
-    OEIconTypeList
+    OEIconTypeList,
+    OEIconTypeSearch
 };
 
 @interface OEIconFactory : NSObject
