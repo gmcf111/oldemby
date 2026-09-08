@@ -512,14 +512,19 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-3 userInfo:@{NSLocalizedDescriptionKey:msg}]);
             return;
         }
-        // Also check the video codec: even an mp4 container may hold a
+        // Also check the actual streams: even an mp4 container may hold a
         // codec that iOS 6 MPMoviePlayer cannot decode (H.265/HEVC, VP9,
-        // AV1).  Playing such a file directly causes the system player to
-        // throw an NSInvalidArgumentException from a delayed-perform
-        // callback, which aborts the process.  Reject these early so the
-        // user is guided to the transcode button instead.
+        // AV1, TrueHD, DTS, 10-bit H.264, …).  Playing such a file directly
+        // makes the system player throw an NSInvalidArgumentException from a
+        // delayed-perform callback in a later RunLoop tick, which no
+        // @try/@catch at the call site can intercept — the process aborts.
+        // Reject these early so the user is guided to the transcode button
+        // instead of watching the app crash after buffering.
         if (!isAudio) {
             NSString *videoCodec = nil;
+            NSString *audioCodec = nil;
+            NSString *h264Profile = nil;
+            NSInteger videoWidth = 0, videoHeight = 0;
             for (NSDictionary *candidate in sources) {
                 if (![candidate isKindOfClass:[NSDictionary class]]) continue;
                 NSArray *streams = candidate[@"MediaStreams"];
@@ -527,17 +532,27 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
                 for (NSDictionary *stream in streams) {
                     if (![stream isKindOfClass:[NSDictionary class]]) continue;
                     NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
-                    if (![type isEqualToString:@"Video"]) continue;
-                    videoCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
-                    if (videoCodec.length) break;
+                    if ([type isEqualToString:@"Video"] && !videoCodec.length) {
+                        videoCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
+                        h264Profile = [stream[@"Profile"] isKindOfClass:[NSString class]] ? [stream[@"Profile"] lowercaseString] : nil;
+                        id w = stream[@"Width"], h = stream[@"Height"];
+                        if ([w respondsToSelector:@selector(integerValue)]) videoWidth = [w integerValue];
+                        if ([h respondsToSelector:@selector(integerValue)]) videoHeight = [h integerValue];
+                    } else if ([type isEqualToString:@"Audio"] && !audioCodec.length) {
+                        audioCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
+                    }
                 }
                 if (videoCodec.length) break;
             }
+            // Video codec: only H.264-family and MPEG-4 part 2 are decodable
+            // by the iOS 6 system player.
             if (videoCodec.length) {
                 static NSArray *unsupportedCodecs = nil;
                 static dispatch_once_t onceTokenCodec;
                 dispatch_once(&onceTokenCodec, ^{
-                    unsupportedCodecs = @[@"hevc", @"h265", @"h.265", @"vp9", @"vp09", @"av1", @"av01", @"vvc", @"h266", @"h.266"];
+                    unsupportedCodecs = @[@"hevc", @"h265", @"h.265", @"vp9", @"vp09", @"av1", @"av01",
+                                          @"vvc", @"h266", @"h.266", @"wmv3", @"vc1", @"vc-1",
+                                          @"theora", @"mpeg1", @"mpeg1video", @"prores"];
                 });
                 for (NSString *bad in unsupportedCodecs) {
                     if ([videoCodec isEqualToString:bad] || [videoCodec containsString:bad]) {
@@ -545,6 +560,39 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
                         if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
                         return;
                     }
+                }
+            }
+            // 10-bit H.264 (Hi10P, common in fansub encodes) has no hardware
+            // decoder on iOS 6 and crashes the player exactly like HEVC.
+            if ([h264Profile rangeOfString:@"10"].location != NSNotFound) {
+                NSString *msg = [NSString stringWithFormat:@"该视频为 %@（10-bit H.264），iOS 6 无对应硬件解码器。请使用上方的转码播放按钮。", h264Profile];
+                if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
+                return;
+            }
+            // Beyond 1080p the iOS 6 decoder rejects the stream outright.
+            if (videoWidth > 1920 || videoHeight > 1088) {
+                NSString *msg = [NSString stringWithFormat:@"该视频分辨率为 %ld×%ld，超出 iOS 6 播放器的 1080p 上限。请使用上方的转码播放按钮。", (long)videoWidth, (long)videoHeight];
+                if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
+                return;
+            }
+            // Audio codec: an mp4 with h264 video but a TrueHD/DTS/FLAC track
+            // is just as undecodable.  iOS 6 MPMoviePlayer handles AAC, MP3,
+            // (E-)AC3 and ALAC; everything else must go through transcode.
+            if (audioCodec.length) {
+                static NSArray *supportedAudio = nil;
+                static dispatch_once_t onceTokenAudio;
+                dispatch_once(&onceTokenAudio, ^{
+                    supportedAudio = @[@"aac", @"mp3", @"mp2", @"mp1", @"ac3", @"eac3", @"e-ac3",
+                                       @"alac", @"pcm", @"lpcm"];
+                });
+                BOOL audioOK = NO;
+                for (NSString *good in supportedAudio) {
+                    if ([audioCodec isEqualToString:good] || [audioCodec containsString:good]) { audioOK = YES; break; }
+                }
+                if (!audioOK) {
+                    NSString *msg = [NSString stringWithFormat:@"该视频的音轨为 %@ 编码，iOS 6 系统播放器无法解码。请使用上方的转码播放按钮。", audioCodec.uppercaseString];
+                    if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
+                    return;
                 }
             }
         }

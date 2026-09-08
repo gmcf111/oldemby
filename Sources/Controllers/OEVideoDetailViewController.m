@@ -510,12 +510,17 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
         [self startSubtitlePlayback];
     } @catch (NSException *e) {
         NSLog(@"[OldEmby] presentPlayerForURL exception: %@", e);
+        // Note: initWithContentURL: may have thrown before the controller was
+        // assigned, so activePlayerController can legitimately be nil here.
+        // Guard each use: messaging nil is harmless, but dereferencing
+        // moviePlayer on a half-built controller is not.
         @try { [self.activePlayerController.moviePlayer stop]; } @catch (NSException *stopEx) {
             NSLog(@"[OldEmby] cleanup stop exception: %@", stopEx);
         }
         [self removePlayerObserversForPlayer:self.activePlayerController.moviePlayer];
         self.activePlayerController = nil;
         self.dismissingPlayer = NO;
+        self.statusLabel.text = @"播放失败";
         NSString *msg = [NSString stringWithFormat:@"系统播放器无法打开此视频流：%@", e.reason ?: e.name ?: @"未知异常"];
         [self showPlaybackError:msg detail:[self playbackFailureDetail]];
     }
