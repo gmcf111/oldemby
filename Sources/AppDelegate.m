@@ -31,19 +31,20 @@
     OEMusicLibraryViewController *musicVC = [[OEMusicLibraryViewController alloc] init];
     musicVC.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"音乐" image:[OEIconFactory imageForIconType:OEIconTypeMusic size:CGSizeMake(30, 30) color:tabIconColor] tag:1];
 
-    OESettingsViewController *settingsVC = [[OESettingsViewController alloc] init];
-    settingsVC.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"设置" image:[OEIconFactory imageForIconType:OEIconTypeSettings size:CGSizeMake(30, 30) color:tabIconColor] tag:2];
-
+    // 搜索 sits left of 设置 in the tab order.
     OESearchViewController *searchVC = [[OESearchViewController alloc] init];
-    searchVC.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"搜索" image:[OEIconFactory imageForIconType:OEIconTypeSearch size:CGSizeMake(30, 30) color:tabIconColor] tag:3];
+    searchVC.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"搜索" image:[OEIconFactory imageForIconType:OEIconTypeSearch size:CGSizeMake(30, 30) color:tabIconColor] tag:2];
 
-    // Four independent navigation stacks, one per root tab: 影视 / 音乐 / 设置
-    // / 搜索. None of them hosts another, so every module stays a peer of the
+    OESettingsViewController *settingsVC = [[OESettingsViewController alloc] init];
+    settingsVC.tabBarItem = [[UITabBarItem alloc] initWithTitle:@"设置" image:[OEIconFactory imageForIconType:OEIconTypeSettings size:CGSizeMake(30, 30) color:tabIconColor] tag:3];
+
+    // Four independent navigation stacks, one per root tab: 影视 / 音乐 / 搜索
+    // / 设置. None of them hosts another, so every module stays a peer of the
     // others in both the tab bar and the navigation hierarchy.
     UINavigationController *nav1 = [[UINavigationController alloc] initWithRootViewController:videoVC];
     UINavigationController *nav2 = [[UINavigationController alloc] initWithRootViewController:musicVC];
-    UINavigationController *nav3 = [[UINavigationController alloc] initWithRootViewController:settingsVC];
-    UINavigationController *nav4 = [[UINavigationController alloc] initWithRootViewController:searchVC];
+    UINavigationController *nav3 = [[UINavigationController alloc] initWithRootViewController:searchVC];
+    UINavigationController *nav4 = [[UINavigationController alloc] initWithRootViewController:settingsVC];
 
     self.tabBarController = [[OERootTabBarController alloc] initWithMusicNavigationController:nav2];
     self.tabBarController.viewControllers = @[nav1, nav2, nav3, nav4];

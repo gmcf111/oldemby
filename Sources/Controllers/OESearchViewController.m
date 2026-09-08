@@ -48,7 +48,6 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectZero];
     self.searchBar.delegate = self;
     self.searchBar.placeholder = @"搜索影视或音乐";
-    self.searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     if ([self.searchBar respondsToSelector:@selector(setReturnKeyType:)]) {
         self.searchBar.returnKeyType = UIReturnKeySearch;
     }
@@ -60,7 +59,9 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     [self.scopeControl addTarget:self action:@selector(scopeChanged:) forControlEvents:UIControlEventValueChanged];
     [self.view addSubview:self.scopeControl];
 
-    self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    // Grouped style gives the Cydia look: inset rounded rows below a fixed
+    // search field instead of a full-bleed plain list.
+    self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleGrouped];
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
     self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -79,9 +80,11 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     [super viewDidLayoutSubviews];
     CGFloat w = self.view.bounds.size.width;
     CGFloat h = self.view.bounds.size.height;
-    self.searchBar.frame = CGRectMake(0, 0, w, kOESearchBarHeight);
-    self.scopeControl.frame = CGRectMake(12, kOESearchBarHeight + 7, w - 24, 30);
-    CGFloat tableTop = kOESearchBarHeight + kOEScopeHeight;
+    // Cydia-style header: the field is inset from the screen edges and floats
+    // above the grouped list, not edge-to-edge under the navigation bar.
+    self.searchBar.frame = CGRectMake(7, 7, w - 14, kOESearchBarHeight);
+    self.scopeControl.frame = CGRectMake(13, kOESearchBarHeight + 11, w - 26, 30);
+    CGFloat tableTop = kOESearchBarHeight + kOEScopeHeight + 6;
     self.tableView.frame = CGRectMake(0, tableTop, w, MAX(0, h - tableTop));
     [self positionPlaceholder];
 }
@@ -109,8 +112,22 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     self.view.backgroundColor = [OETheme libraryBackgroundColor];
     self.tableView.backgroundColor = [OETheme libraryBackgroundColor];
     self.tableView.separatorColor = [OETheme separatorColor];
-    self.scopeControl.tintColor = [OETheme accentColor];
-    self.searchBar.tintColor = [OETheme accentColor];
+    // Neutral grays, never the Emby green: the scope control's selected
+    // segment and the search field's cursor / clear / cancel buttons all
+    // follow tintColor, which used to paint two green accents next to the
+    // field.
+    UIColor *neutralTint = [OETheme isLight] ? [UIColor colorWithWhite:0.35 alpha:1.0]
+                                             : [UIColor colorWithWhite:0.85 alpha:1.0];
+    self.scopeControl.tintColor = neutralTint;
+    if ([self.searchBar respondsToSelector:@selector(setBarTintColor:)]) {
+        // iOS 7+: barTintColor paints the bar behind the (light) field.
+        self.searchBar.barTintColor = [OETheme navigationBarColor];
+        self.searchBar.tintColor = neutralTint;
+    } else {
+        // iOS 6: tintColor paints the field itself; a near-white value keeps
+        // Cydia's light rounded field on the dark header.
+        self.searchBar.tintColor = [UIColor colorWithWhite:0.97 alpha:1.0];
+    }
     if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
 }
 
@@ -270,6 +287,17 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
 }
 
 #pragma mark - Table
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return 1;
+}
+
+// Cydia-style section caption: scope name plus the hit count.
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (!self.items.count) return nil;
+    NSString *name = self.scope == OESearchScopeMusic ? @"音乐" : @"影视";
+    return [NSString stringWithFormat:@"%@ (%d)", name, (int)self.items.count];
+}
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     return self.items.count;
