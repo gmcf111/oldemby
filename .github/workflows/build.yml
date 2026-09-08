@@ -2,15 +2,6 @@ name: OldEmby Build (Theos armv7 iOS6-9)
 
 on:
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: 'Build type'
-        required: false
-        default: 'release'
-        type: choice
-        options:
-          - release
-          - debug
 
 # Minimal permissions
 permissions:
@@ -263,24 +254,19 @@ jobs:
           echo "THEOS=$THEOS"
           echo "ARCHS=armv7 TARGET=iphone:clang:9.3:6.0"
           make clean 2>&1 | tail -10 || true
-          if [ "${{ inputs.build_type }}" = "debug" ]; then
-            make -j"$(nproc)" package DEBUG=1
-          else
-            make -j"$(nproc)" package FINALPACKAGE=1
-          fi
+          make -j"$(nproc)" package FINALPACKAGE=1
 
           echo "=== Build artifacts ==="
           ls -R .theos | head -60 || true
           ls -lh packages/ || true
 
           # Resolve the built bundle once and share it with the later steps.
-          # Theos puts the release bundle in .theos/obj/OldEmby.app but a
-          # DEBUG=1 bundle in .theos/obj/<variant>/OldEmby.app, so a hardcoded
-          # path only ever worked for release builds. Require both Info.plist
-          # and the executable so a half-populated per-arch dir never wins.
+          # Theos puts the release bundle in .theos/obj/OldEmby.app, but the
+          # staging copy also exists, so a hardcoded path is not enough.
+          # Require both Info.plist and the executable so a half-populated
+          # per-arch dir never wins.
           APP_PATH=""
           for cand in .theos/obj/OldEmby.app \
-                      .theos/obj/debug/OldEmby.app \
                       .theos/_/Applications/OldEmby.app; do
             if [ -f "$cand/OldEmby" ] && [ -f "$cand/Info.plist" ]; then
               APP_PATH="$cand"
@@ -416,7 +402,6 @@ jobs:
           echo "### OldEmby Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: $(git rev-parse --short HEAD 2>/dev/null || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-          echo "- Build type: ${{ inputs.build_type }}" >> $GITHUB_STEP_SUMMARY
           echo "- SDKs: $(ls -1 $THEOS/sdks/*.sdk 2>/dev/null | xargs -n1 basename | tr '\n' ',' || echo 'none')" >> $GITHUB_STEP_SUMMARY
           echo "- Artifacts: $(ls -1 *.ipa 2>/dev/null | tr '\n' ',' || echo 'none') $(ls -1 packages/*.deb 2>/dev/null | tr '\n' ',' || echo '')" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

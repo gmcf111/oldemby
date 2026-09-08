@@ -20,11 +20,8 @@ OldEmby 是面向 iOS 6.0–9.x、32 位 armv7 设备的 Emby 客户端。代码
 常用命令（需已认证的 GitHub CLI）：
 
 ```bash
-# 触发 release 构建
-gh workflow run build.yml -f build_type=release
-
-# 触发 debug 构建
-gh workflow run build.yml -f build_type=debug
+# 触发构建
+gh workflow run build.yml
 
 # 查看最近的构建并跟踪某次运行
 gh run list --workflow build.yml
@@ -47,4 +44,4 @@ gh run watch <run-id>
 
 ## 打包链路
 
-`.github/workflows/build.yml` 是构建行为的权威来源。它先用 `tools/patch_sdk_tbd.py` 修复 Theos SDK stub，再构建 armv7 app，解析实际的 `OldEmby.app` 路径（release/debug 不同），对同一二进制运行 `tools/fix_ios6_bindings.py` 并重签，然后组装 IPA。更改构建、SDK 或打包相关文件时，须保留这些顺序依赖和 IPA 的 `Info.plist`、图标、Mach-O、无 entitlements 校验。
+`.github/workflows/build.yml` 是构建行为的权威来源。它先用 `tools/patch_sdk_tbd.py` 修复 Theos SDK stub，再构建 armv7 app，解析实际的 `OldEmby.app` 路径，对同一二进制运行 `tools/fix_ios6_bindings.py` 并重签，然后组装 IPA。更改构建、SDK 或打包相关文件时，须保留这些顺序依赖和 IPA 的 `Info.plist`、图标、Mach-O、无 entitlements 校验。
