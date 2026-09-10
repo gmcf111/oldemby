@@ -404,13 +404,14 @@ jobs:
           echo "App icons present"
 
           # File name carries the full beta identity so downloads from
-          # different releases never collide.
+          # different releases never collide. This is the only IPA produced:
+          # a second `cp` to a stable alias used to ride along and attached
+          # the identical bytes to the release as a duplicate asset.
           IPA_NAME="OldEmby-${RELEASE_VERSION}-${RELEASE_BUILD_NUM}-${RELEASE_COMMIT}-armv7.ipa"
-          rm -f OldEmby-armv7.ipa
+          rm -f *.ipa
           # -X drops __MACOSX/junk entries; content goes in un-compressed by
           # default on Linux, which is what installers expect inside an IPA
           zip -r -X "$IPA_NAME" Payload >/dev/null
-          cp "$IPA_NAME" OldEmby-armv7.ipa
           echo "IPA created:"
           ls -lh *.ipa
           unzip -l "$IPA_NAME" | head -10

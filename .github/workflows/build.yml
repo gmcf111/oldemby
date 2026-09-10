@@ -376,12 +376,16 @@ jobs:
 
           VERSION=$(grep -m1 "^Version:" control | awk '{print $2}')
           COMMIT=$(git rev-parse --short HEAD)
+          [ -n "$VERSION" ] || { echo "::error::No Version: field in control"; exit 1; }
+          # Exactly one IPA ships. The version+commit name is the one that
+          # leaves this step - it never collides between runs. A second `cp`
+          # to a stable alias used to be uploaded alongside it, which put the
+          # very same bytes into the artifact (and the Beta Release) twice.
           IPA_NAME="OldEmby-${VERSION}-${COMMIT}-armv7.ipa"
-          rm -f OldEmby-armv7.ipa
+          rm -f *.ipa
           # -X drops __MACOSX/junk entries; content goes in un-compressed by
           # default on Linux, which is what installers expect inside an IPA
           zip -r -X "$IPA_NAME" Payload >/dev/null
-          cp "$IPA_NAME" OldEmby-armv7.ipa
           echo "IPA created:"
           ls -lh *.ipa
           unzip -l "$IPA_NAME" | head -10
