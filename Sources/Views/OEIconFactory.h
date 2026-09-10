@@ -11,8 +11,9 @@ typedef NS_ENUM(NSInteger, OEIconType) {
     OEIconTypeChevronDown,
     OEIconTypeHeart,
     OEIconTypeHeartFilled,
-    OEIconTypeRepeat,
-    OEIconTypeRepeatOne,
+    OEIconTypeRepeat,      // play mode: repeat all (loop)
+    OEIconTypeRepeatOne,   // play mode: repeat one (loop + "1")
+    OEIconTypeRepeatOff,   // play mode: no repeat (loop, slashed)
     OEIconTypeList,
     OEIconTypeSearch
 };

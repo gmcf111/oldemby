@@ -19,13 +19,20 @@
 // overlay. Landscape uses a two-pane layout (artwork left, info + lyrics
 // right); portrait stacks vertically.
 //
-// The bottom bar is a single row: an empty UIToolbar supplies the native bar
-// chrome, and every control is a direct subview positioned with manual
-// frames. Packing UISlider/MPVolumeView into UIBarButtonItem custom views
-// made them vanish on iOS 6 whenever the items overflowed the bar width;
-// direct subviews render reliably and line up on one shared centerline.
-// Sliders are stock native controls; buttons use drawn icons because iOS 6
-// has no system repeat/queue/heart glyphs.
+// The bottom bar is one row on a single shared centerline:
+//
+//   [prev play/pause next]      [ -------- progress -------- ]      [volume mode favorite queue]
+//
+//   - prev/play-pause/next are native UIBarButtonItem system items hosted by
+//     the bar's UIToolbar, so they are drawn by UIKit (no hand-rolled icons).
+//     iOS 6 has no system item for "previous/next track", so Rewind and
+//     FastForward stand in — the native transport pair.
+//   - progress is a stock UISlider, horizontally centred on the bar and as
+//     long as the gap between the two clusters allows.
+//   - volume (MPVolumeView) and the drawn mode / favorite / queue buttons are
+//     direct subviews: packing sliders into UIBarButtonItem custom views made
+//     them vanish on iOS 6 once the row overflowed the bar width. Only the
+//     transport lives in the toolbar, and it never carries a slider.
 
 @interface OEMusicPlayerViewController ()
 @property (nonatomic, strong) UIImageView *backgroundImageView;
@@ -44,14 +51,18 @@
 @property (nonatomic, assign) NSInteger highlightedLyricsIndex;
 @property (nonatomic, strong) UIView *bottomBar;
 @property (nonatomic, strong) UIToolbar *bottomChrome;
-@property (nonatomic, strong) UIButton *previousButton;
-@property (nonatomic, strong) UIButton *playPauseButton;
-@property (nonatomic, strong) UIButton *nextButton;
+// Native transport. The toolbar hosts these as real bar items; the slider and
+// the auxiliary buttons stay direct subviews (bar-item custom views clip and
+// vanish on iOS 6 as soon as the row overflows).
+@property (nonatomic, strong) UIBarButtonItem *previousItem;
+@property (nonatomic, strong) UIBarButtonItem *playPauseItem;
+@property (nonatomic, strong) UIBarButtonItem *nextItem;
+@property (nonatomic, assign) UIBarButtonSystemItem playPauseSystemItem;
 @property (nonatomic, strong) UISlider *progressSlider;
 @property (nonatomic, strong) MPVolumeView *volumeView;
 @property (nonatomic, strong) UIButton *repeatButton;
-@property (nonatomic, strong) UIButton *queueButton;
 @property (nonatomic, strong) UIButton *favoriteButton;
+@property (nonatomic, strong) UIButton *queueButton;
 @property (nonatomic, assign) BOOL favoriteRequestInFlight;
 @property (nonatomic, strong) UILabel *timeLabel;
 @property (nonatomic, assign) BOOL seeking;
@@ -63,7 +74,10 @@
     // item/playlist are accepted for API compatibility but deliberately not
     // stored: opening the player must not start or restart playback.
     self = [super init];
-    if (self) _highlightedLyricsIndex = NSNotFound;
+    if (self) {
+        _highlightedLyricsIndex = NSNotFound;
+        _playPauseSystemItem = UIBarButtonSystemItemPlay;
+    }
     return self;
 }
 
@@ -71,6 +85,62 @@
     UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;
+}
+
+#pragma mark - Native transport items
+
+// The transport is rebuilt only when the play/pause glyph actually changes;
+// refreshing on every progress tick would reflow the toolbar twice a second.
+- (void)updatePlayPauseItem {
+    UIBarButtonSystemItem wanted = [OEMusicPlaybackManager sharedManager].isPlaying
+        ? UIBarButtonSystemItemPause : UIBarButtonSystemItemPlay;
+    if (self.playPauseSystemItem == wanted) return;
+    self.playPauseSystemItem = wanted;
+    [self rebuildTransportItems];
+}
+
+- (void)rebuildTransportItems {
+    if (!self.previousItem) {
+        self.previousItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRewind
+                                                                         target:self action:@selector(previousTapped)];
+        self.nextItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFastForward
+                                                                     target:self action:@selector(nextTapped)];
+    }
+    self.playPauseItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:self.playPauseSystemItem
+                                                                      target:self action:@selector(playPauseTapped)];
+    UIBarButtonItem *gapA = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
+    gapA.width = 16;
+    UIBarButtonItem *gapB = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
+    gapB.width = 16;
+    // Trailing flexible space keeps the trio pinned to the left edge instead
+    // of letting the toolbar stretch the buttons across the whole row.
+    UIBarButtonItem *tail = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    [self.bottomChrome setItems:@[self.previousItem, gapA, self.playPauseItem, gapB, self.nextItem, tail] animated:NO];
+}
+
+// Union of the toolbar's own transport button frames, in bottomBar
+// coordinates. Item widths and the bar's inner stack differ between iOS 6
+// (bordered buttons) and iOS 7+ (borderless buttons inside a stack view), so
+// measuring beats guessing: the layout uses this both to keep the progress
+// slider clear of the transport and to put every other control on the
+// transport's own centerline. Views spanning most of the bar are backgrounds,
+// not buttons.
+- (CGRect)transportClusterRect {
+    [self.bottomChrome layoutIfNeeded];
+    CGFloat width = MAX(1.0, self.bottomChrome.bounds.size.width);
+    CGRect cluster = CGRectNull;
+    NSMutableArray *queue = [NSMutableArray arrayWithArray:self.bottomChrome.subviews];
+    while (queue.count) {
+        UIView *view = queue[0];
+        [queue removeObjectAtIndex:0];
+        BOOL spansBar = view.frame.size.width > width * 0.7;
+        if (!spansBar && !view.hidden && [view isKindOfClass:[UIControl class]]) {
+            CGRect rect = [view.superview convertRect:view.frame toView:self.bottomBar];
+            cluster = CGRectIsNull(cluster) ? rect : CGRectUnion(cluster, rect);
+        }
+        [queue addObjectsFromArray:view.subviews];
+    }
+    return cluster;
 }
 
 - (void)viewDidLoad {
@@ -140,33 +210,31 @@
     self.lyricsEmptyLabel.backgroundColor = [UIColor clearColor];
     [self.lyricsTable addSubview:self.lyricsEmptyLabel];
 
-    // Bottom bar: chrome first, then controls as direct subviews.
+    // Bottom bar: native toolbar chrome carrying the native transport items,
+    // then the slider and the auxiliary buttons as direct subviews on the
+    // same centerline.
     self.bottomBar = [[UIView alloc] initWithFrame:CGRectZero];
     [self.view addSubview:self.bottomBar];
 
     self.bottomChrome = [[UIToolbar alloc] initWithFrame:CGRectZero];
-    self.bottomChrome.items = @[];
     [self.bottomBar addSubview:self.bottomChrome];
-
-    self.previousButton = [self iconButtonWithAction:@selector(previousTapped)];
-    [self.bottomBar addSubview:self.previousButton];
-    self.playPauseButton = [self iconButtonWithAction:@selector(playPauseTapped)];
-    self.playPauseButton.layer.cornerRadius = 19.0;
-    self.playPauseButton.clipsToBounds = YES;
-    [self.bottomBar addSubview:self.playPauseButton];
-    self.nextButton = [self iconButtonWithAction:@selector(nextTapped)];
-    [self.bottomBar addSubview:self.nextButton];
+    [self rebuildTransportItems];
 
     // Stock native slider — no tint overrides, iOS 6 glossy blue look.
     self.progressSlider = [[UISlider alloc] initWithFrame:CGRectZero];
     self.progressSlider.minimumValue = 0.0;
     self.progressSlider.maximumValue = 1.0;
     self.progressSlider.continuous = YES;
+    self.progressSlider.exclusiveTouch = YES;
     [self.progressSlider addTarget:self action:@selector(sliderTouchDown) forControlEvents:UIControlEventTouchDown];
     [self.progressSlider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
-    // Use a generous set of release events so the slider reliably commits
-    // the seek even when the finger drags outside the track on iOS 6.
-    [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel | UIControlEventTouchDragExit | UIControlEventTouchDragEnter];
+    // Commit the seek only on a genuine touch-up/cancel. TouchDragExit and
+    // TouchDragEnter fire the moment a finger leaves and re-enters this
+    // 30pt-tall control on its way along the track; treating those as a
+    // release committed a seek mid-drag and cleared `seeking`, after which
+    // the next progress tick snapped the thumb back to the playback
+    // position — the "slider cannot be dragged" bug.
+    [self.progressSlider addTarget:self action:@selector(sliderTouchUp) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside | UIControlEventTouchCancel];
     [self.bottomBar addSubview:self.progressSlider];
 
     self.volumeView = [[MPVolumeView alloc] initWithFrame:CGRectZero];
@@ -175,10 +243,10 @@
 
     self.repeatButton = [self iconButtonWithAction:@selector(repeatTapped)];
     [self.bottomBar addSubview:self.repeatButton];
-    self.queueButton = [self iconButtonWithAction:@selector(queueTapped)];
-    [self.bottomBar addSubview:self.queueButton];
     self.favoriteButton = [self iconButtonWithAction:@selector(favoriteTapped)];
     [self.bottomBar addSubview:self.favoriteButton];
+    self.queueButton = [self iconButtonWithAction:@selector(queueTapped)];
+    [self.bottomBar addSubview:self.queueButton];
 
     // "01:23 / 04:56" caption just above the bar.
     self.timeLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -220,8 +288,15 @@
     self.timeLabel.textColor = [OETheme secondaryTextColor];
     self.lyricsTable.backgroundColor = [UIColor clearColor];
     self.lyricsEmptyLabel.textColor = [OETheme secondaryTextColor];
-    self.playPauseButton.backgroundColor = [OETheme accentColor];
     [OETheme applyToBarsInView:self.bottomBar];
+    // The toolbar now hosts the native transport items, so its tint paints
+    // the glyphs. applyToBarsInView points tintColor at the bar colour, which
+    // would make the items invisible on iOS 7+ where barTintColor paints the
+    // bar and tintColor only the items.
+    if ([self.bottomChrome respondsToSelector:@selector(setBarTintColor:)]) {
+        self.bottomChrome.barTintColor = [OETheme navigationBarColor];
+        self.bottomChrome.tintColor = [OETheme primaryTextColor];
+    }
     [self refresh];
     [self.lyricsTable reloadData];
 }
@@ -249,43 +324,65 @@
     self.lyricsEmptyLabel.frame = self.lyricsTable.bounds;
 }
 
-// One row, one centerline. Play sits exactly midway between prev and next
-// by construction (equal 4pt gaps around a 38pt button between 30pt ones).
-// The slider takes whatever width is left between the transport cluster and
-// the volume + aux cluster, capped so wide iPad rows don't stretch it.
+// One row, one centerline. The toolbar lays out the native transport itself,
+// and every other control is then placed on the centerline *measured from
+// those transport buttons* — not an assumed one — so the volume track, the
+// progress track and the three drawn buttons always line up with play/pause.
 - (void)layoutBottomBarWithWidth:(CGFloat)w height:(CGFloat)h {
     CGFloat barH = 56;
     self.bottomBar.frame = CGRectMake(0, h - barH, w, barH);
     self.bottomChrome.frame = self.bottomBar.bounds;
+
+    CGRect transport = [self transportClusterRect];
     CGFloat cy = barH / 2.0;
+    if (!CGRectIsNull(transport)) {
+        CGFloat measured = CGRectGetMidY(transport);
+        // Only trust a plausible reading; a bad one would tilt the whole row.
+        if (measured > barH * 0.25 && measured < barH * 0.75) cy = measured;
+    }
+    // The native transport lives inside the toolbar; never draw over it.
+    CGFloat leftEdge = (CGRectIsNull(transport) ? MIN(w * 0.5, 154.0) : CGRectGetMaxX(transport)) + 8.0;
 
-    CGFloat x = 8;
-    self.previousButton.frame = CGRectMake(x, cy - 15, 30, 30);
-    self.playPauseButton.frame = CGRectMake(x + 34, cy - 19, 38, 38);
-    self.nextButton.frame = CGRectMake(x + 76, cy - 15, 30, 30);
-    x += 112;
+    // Auxiliary cluster against the trailing edge, left to right: volume,
+    // play mode, favorite, play queue. Native transport items are wide (they
+    // grow further on iOS 7+), so on tight rows the auxiliary controls shrink
+    // — volume first, then the buttons — instead of running off the bar.
+    BOOL wide = w >= 480;
+    CGFloat aux = wide ? 30 : 24;
+    CGFloat auxGap = wide ? 8 : 6;
+    CGFloat volW = wide ? 68 : 34;
+    CGFloat volGap = wide ? 10 : 6;
+    CGFloat clusterW = volW + volGap + aux * 3 + auxGap * 2;
+    CGFloat maxClusterW = MAX(96.0, w - 8 - leftEdge - 56.0);
+    if (clusterW > maxClusterW) {
+        volW = MAX(30.0, volW - (clusterW - maxClusterW));
+        clusterW = volW + volGap + aux * 3 + auxGap * 2;
+        if (clusterW > maxClusterW) {
+            aux = MAX(22.0, aux - (clusterW - maxClusterW) / 3.0);
+            auxGap = MAX(4.0, auxGap - 2.0);
+            clusterW = volW + volGap + aux * 3 + auxGap * 2;
+        }
+    }
+    CGFloat rx = MAX(leftEdge + 8.0, w - 8 - clusterW);
+    // MPVolumeView draws its inner slider centered in its own frame, so a
+    // symmetric, slider-height frame puts its track on cy as well.
+    self.volumeView.frame = CGRectMake(rx, cy - 17, volW, 34);
+    CGFloat bx = rx + volW + volGap;
+    self.repeatButton.frame = CGRectMake(bx, cy - aux / 2.0, aux, aux);
+    self.favoriteButton.frame = CGRectMake(bx + aux + auxGap, cy - aux / 2.0, aux, aux);
+    self.queueButton.frame = CGRectMake(bx + (aux + auxGap) * 2, cy - aux / 2.0, aux, aux);
 
-    // Aux cluster from the trailing edge: repeat, queue, favorite.
-    CGFloat aux = 28, auxGap = 4;
-    CGFloat auxW = aux * 3 + auxGap * 2;
-    CGFloat rx = w - 8 - auxW;
-    self.repeatButton.frame = CGRectMake(rx, cy - aux / 2.0, aux, aux);
-    self.queueButton.frame = CGRectMake(rx + aux + auxGap, cy - aux / 2.0, aux, aux);
-    self.favoriteButton.frame = CGRectMake(rx + (aux + auxGap) * 2, cy - aux / 2.0, aux, aux);
-
-    CGFloat volW = w >= 480 ? 64 : 36;
-    CGFloat vx = rx - 6 - volW;
-    // MPVolumeView centers its inner slider inside its frame; give it the
-    // full row height so its track lands on the same centerline as the
-    // progress slider instead of riding high or low.
-    self.volumeView.frame = CGRectMake(vx, 0, volW, barH);
-
-    // Center the capped slider inside the space between the clusters so wide
-    // iPad rows don't leave it hugging the transport buttons.
-    CGFloat avail = vx - 6 - x;
-    CGFloat sliderW = MIN(240, avail);
-    CGFloat sx = x + (avail - sliderW) / 2.0;
-    self.progressSlider.frame = CGRectMake(sx, cy - 15, MAX(48, sliderW), 30);
+    // Progress: centered on the bar's midpoint and as long as the gap between
+    // the two clusters allows. Wide screens get a long, genuinely centered
+    // track; narrow ones shrink it instead of letting it collide.
+    CGFloat rightEdge = rx - 8;
+    CGFloat avail = MAX(24.0, rightEdge - leftEdge);
+    CGFloat cap = wide ? MIN(420.0, w * 0.55) : 280.0;
+    CGFloat sliderW = MAX(24.0, MIN(cap, avail));
+    CGFloat sx = w / 2.0 - sliderW / 2.0;
+    if (sx < leftEdge) sx = leftEdge;
+    if (sx + sliderW > rightEdge) sx = MAX(leftEdge, rightEdge - sliderW);
+    self.progressSlider.frame = CGRectMake(sx, cy - 15, sliderW, 30);
 }
 
 - (void)layoutPortraitWithWidth:(CGFloat)w height:(CGFloat)h topInset:(CGFloat)topInset bottomReserved:(CGFloat)bottomReserved {
@@ -427,15 +524,10 @@
     OETranscodeSettings *settings = [OETranscodeSettings sharedSettings];
     self.badgeLabel.text = settings.directPlay ? @"直连" : [NSString stringWithFormat:@"%ldk", (long)(settings.maxAudioBitrate / 1000)];
 
-    OEIconType primary = manager.isPlaying ? OEIconTypePause : OEIconTypePlay;
-    [self.playPauseButton setImage:[OEIconFactory imageForIconType:primary size:CGSizeMake(20, 20) color:[UIColor whiteColor]] forState:UIControlStateNormal];
-    [self.previousButton setImage:[OEIconFactory imageForIconType:OEIconTypePrevious size:CGSizeMake(18, 18) color:[OETheme primaryTextColor]] forState:UIControlStateNormal];
-    [self.nextButton setImage:[OEIconFactory imageForIconType:OEIconTypeNext size:CGSizeMake(18, 18) color:[OETheme primaryTextColor]] forState:UIControlStateNormal];
-
-    UIColor *repeatColor = manager.repeatMode == OEMusicRepeatModeOff ? [OETheme secondaryTextColor] : [OETheme accentColor];
-    OEIconType repeatIcon = manager.repeatMode == OEMusicRepeatModeOne ? OEIconTypeRepeatOne : OEIconTypeRepeat;
-    [self.repeatButton setImage:[OEIconFactory imageForIconType:repeatIcon size:CGSizeMake(19, 19) color:repeatColor] forState:UIControlStateNormal];
-    [self.queueButton setImage:[OEIconFactory imageForIconType:OEIconTypeList size:CGSizeMake(19, 19) color:[OETheme secondaryTextColor]] forState:UIControlStateNormal];
+    // Native transport: swap the toolbar's play/pause system item in place.
+    [self updatePlayPauseItem];
+    [self updateRepeatButton];
+    [self.queueButton setImage:[OEIconFactory imageForIconType:OEIconTypeList size:CGSizeMake(20, 20) color:[OETheme secondaryTextColor]] forState:UIControlStateNormal];
     [self updateFavoriteButton];
     [self.collapseButton setImage:[OEIconFactory imageForIconType:OEIconTypeChevronDown size:CGSizeMake(24, 24) color:[OETheme secondaryTextColor]] forState:UIControlStateNormal];
 
@@ -449,7 +541,19 @@
     BOOL fav = item.favorite;
     OEIconType icon = fav ? OEIconTypeHeartFilled : OEIconTypeHeart;
     UIColor *color = fav ? [OETheme accentColor] : [OETheme secondaryTextColor];
-    [self.favoriteButton setImage:[OEIconFactory imageForIconType:icon size:CGSizeMake(19, 19) color:color] forState:UIControlStateNormal];
+    [self.favoriteButton setImage:[OEIconFactory imageForIconType:icon size:CGSizeMake(20, 20) color:color] forState:UIControlStateNormal];
+}
+
+// Each play mode gets its own Apple-Music-style glyph: the plain loop for
+// repeat-all, the loop with a "1" for repeat-one, and a slashed loop for the
+// off state. Off is additionally drawn in the muted colour.
+- (void)updateRepeatButton {
+    OEMusicRepeatMode mode = [OEMusicPlaybackManager sharedManager].repeatMode;
+    OEIconType icon = OEIconTypeRepeatOff;
+    if (mode == OEMusicRepeatModeAll) icon = OEIconTypeRepeat;
+    else if (mode == OEMusicRepeatModeOne) icon = OEIconTypeRepeatOne;
+    UIColor *color = mode == OEMusicRepeatModeOff ? [OETheme secondaryTextColor] : [OETheme accentColor];
+    [self.repeatButton setImage:[OEIconFactory imageForIconType:icon size:CGSizeMake(21, 21) color:color] forState:UIControlStateNormal];
 }
 
 - (void)requestLyricsForItemIfNeeded:(OEEmbyItem *)item {
@@ -544,7 +648,7 @@
     // Optimistic icon flip; reverted if the server call fails.
     OEIconType optimisticIcon = target ? OEIconTypeHeartFilled : OEIconTypeHeart;
     UIColor *optimisticColor = target ? [OETheme accentColor] : [OETheme secondaryTextColor];
-    [self.favoriteButton setImage:[OEIconFactory imageForIconType:optimisticIcon size:CGSizeMake(19, 19) color:optimisticColor] forState:UIControlStateNormal];
+    [self.favoriteButton setImage:[OEIconFactory imageForIconType:optimisticIcon size:CGSizeMake(20, 20) color:optimisticColor] forState:UIControlStateNormal];
     __weak typeof(self) weakSelf = self;
     [[OEEmbyAPIClient sharedClient] setItem:item.itemId favorite:target completion:^(id result, NSError *error) {
         weakSelf.favoriteRequestInFlight = NO;
@@ -559,6 +663,9 @@
 }
 
 - (void)sliderTouchDown {
+    // Freeze the periodic progress feed for the whole gesture. Dragging stays
+    // entirely on the slider's own value until the finger lifts, which is
+    // what makes the thumb track the finger instead of snapping back.
     self.seeking = YES;
 }
 - (void)sliderChanged:(UISlider *)slider {
@@ -568,6 +675,9 @@
     [self updateHighlightedLyricsAtTime:previewTime scroll:NO];
 }
 - (void)sliderTouchUp {
+    // Committed by TouchUpInside/TouchUpOutside/TouchCancel only; guard
+    // against a second event firing for the same gesture.
+    if (!self.seeking) return;
     float progress = self.progressSlider.value;
     __weak typeof(self) weakSelf = self;
     [[OEMusicPlaybackManager sharedManager] seekToProgress:progress completion:^(BOOL finished) {

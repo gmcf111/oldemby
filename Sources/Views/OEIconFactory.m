@@ -173,37 +173,61 @@
             break;
         }
         case OEIconTypeRepeat:
-        case OEIconTypeRepeatOne: {
-            // Two chasing arrows forming a loop.
-            CGContextSetLineWidth(ctx, MAX(1.4, w * 0.08));
+        case OEIconTypeRepeatOne:
+        case OEIconTypeRepeatOff: {
+            // Apple Music style play-mode glyph: a single rounded-rectangle
+            // loop with a chevron arrowhead at the top-right (pointing right)
+            // and one at the bottom-left (pointing left). Each stroke stops
+            // just short of the corner the next one starts from, so the shape
+            // reads as a cycle rather than a closed box. Repeat-one adds a
+            // "1" inside the loop; the off state slashes it through.
+            CGFloat left = w * 0.11, right = w * 0.89;
+            CGFloat top = h * 0.27, bottom = h * 0.73;
+            CGFloat radius = w * 0.16;
+            CGFloat tip = MAX(2.0, w * 0.11);   // arrowhead chevron half-size
+            CGFloat gap = h * 0.14;             // break before the next corner
+            CGContextSetLineWidth(ctx, MAX(1.6, w * 0.085));
+
+            // Right edge downwards, round the bottom-right corner, leftwards
+            // along the bottom, ending in a left-pointing chevron.
             CGContextBeginPath(ctx);
-            CGContextMoveToPoint(ctx, w * 0.28, h * 0.36);
-            CGContextAddLineToPoint(ctx, w * 0.78, h * 0.36);
-            CGContextAddCurveToPoint(ctx, w * 0.86, h * 0.36, w * 0.86, h * 0.44, w * 0.86, h * 0.50);
+            CGContextMoveToPoint(ctx, right, top + gap);
+            CGContextAddLineToPoint(ctx, right, bottom - radius);
+            CGContextAddArcToPoint(ctx, right, bottom, right - radius, bottom, radius);
+            CGContextAddLineToPoint(ctx, left + tip, bottom);
             CGContextStrokePath(ctx);
             CGContextBeginPath(ctx);
-            CGContextMoveToPoint(ctx, w * 0.72, h * 0.64);
-            CGContextAddLineToPoint(ctx, w * 0.22, h * 0.64);
-            CGContextAddCurveToPoint(ctx, w * 0.14, h * 0.64, w * 0.14, h * 0.56, w * 0.14, h * 0.50);
+            CGContextMoveToPoint(ctx, left + tip, bottom - tip);
+            CGContextAddLineToPoint(ctx, left, bottom);
+            CGContextAddLineToPoint(ctx, left + tip, bottom + tip);
             CGContextStrokePath(ctx);
-            // Arrowheads
+
+            // Left edge upwards, round the top-left corner, rightwards along
+            // the top, ending in a right-pointing chevron.
             CGContextBeginPath(ctx);
-            CGContextMoveToPoint(ctx, w * 0.20, h * 0.28);
-            CGContextAddLineToPoint(ctx, w * 0.30, h * 0.36);
-            CGContextAddLineToPoint(ctx, w * 0.20, h * 0.44);
+            CGContextMoveToPoint(ctx, left, bottom - gap);
+            CGContextAddLineToPoint(ctx, left, top + radius);
+            CGContextAddArcToPoint(ctx, left, top, left + radius, top, radius);
+            CGContextAddLineToPoint(ctx, right - tip, top);
             CGContextStrokePath(ctx);
             CGContextBeginPath(ctx);
-            CGContextMoveToPoint(ctx, w * 0.80, h * 0.72);
-            CGContextAddLineToPoint(ctx, w * 0.70, h * 0.64);
-            CGContextAddLineToPoint(ctx, w * 0.80, h * 0.56);
+            CGContextMoveToPoint(ctx, right - tip, top - tip);
+            CGContextAddLineToPoint(ctx, right, top);
+            CGContextAddLineToPoint(ctx, right - tip, top + tip);
             CGContextStrokePath(ctx);
+
             if (type == OEIconTypeRepeatOne) {
-                // "1" badge centered in the loop.
-                CGContextSetLineWidth(ctx, MAX(1.2, w * 0.06));
+                // Slim "1" centred in the loop, same stroke weight.
                 CGContextBeginPath(ctx);
-                CGContextMoveToPoint(ctx, w * 0.46, h * 0.47);
-                CGContextAddLineToPoint(ctx, w * 0.51, h * 0.43);
-                CGContextAddLineToPoint(ctx, w * 0.51, h * 0.58);
+                CGContextMoveToPoint(ctx, w * 0.45, h * 0.43);
+                CGContextAddLineToPoint(ctx, w * 0.52, h * 0.38);
+                CGContextAddLineToPoint(ctx, w * 0.52, h * 0.61);
+                CGContextStrokePath(ctx);
+            } else if (type == OEIconTypeRepeatOff) {
+                // Diagonal slash across the loop: repeat is off.
+                CGContextBeginPath(ctx);
+                CGContextMoveToPoint(ctx, w * 0.20, h * 0.82);
+                CGContextAddLineToPoint(ctx, w * 0.80, h * 0.18);
                 CGContextStrokePath(ctx);
             }
             break;
