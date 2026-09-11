@@ -436,12 +436,13 @@ jobs:
             rm -rf "$DEB_ROOT" "$DEB_CHECK"
           done
 
-          # Rename the deb with the same beta identity for the release assets,
-          # keeping the original name as a stable alias for the artifact.
+          # Rename the single DEB to the beta identity. This used to be a
+          # `cp` that kept the original name as an alias, which put the
+          # identical bytes into the artifact (and the Beta Release) twice.
           DEB=$(ls packages/*.deb 2>/dev/null | head -1)
           if [ -n "$DEB" ]; then
             DEB_NAME="OldEmby-${RELEASE_VERSION}-${RELEASE_BUILD_NUM}-${RELEASE_COMMIT}-armv7.deb"
-            cp "$DEB" "packages/$DEB_NAME"
+            mv "$DEB" "packages/$DEB_NAME"
             ls -lh packages/
           fi
 
