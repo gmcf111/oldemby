@@ -8,7 +8,6 @@
 #import "Services/OEImageCache.h"
 #import "Views/OETheme.h"
 #import "Views/OECastStripView.h"
-#import "Views/OEErrorAlertView.h"
 #import "Views/OEMediaInfoView.h"
 #import "Views/OESubtitleOverlayView.h"
 #import "Constants.h"
@@ -36,7 +35,7 @@ static const NSInteger kSubtitleSheetTag = 8002;
 // How long a transient notice (e.g. a subtitle load failure) stays on screen.
 static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 
-@interface OEVideoDetailViewController () <UIActionSheetDelegate>
+@interface OEVideoDetailViewController () <UIActionSheetDelegate, UIAlertViewDelegate>
 @property (nonatomic, strong) OEEmbyItem *item;
 @property (nonatomic, strong) UIImageView *cover;
 @property (nonatomic, strong) UILabel *titleLabel;
@@ -87,6 +86,10 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 // The sheet currently on screen, kept so teardown can dismiss it: UIActionSheet
 // holds its delegate unretained and would message a freed controller.
 @property (nonatomic, strong) UIActionSheet *activeSheet;
+// Full text of the last playback failure (message + context), so the native
+// alert's 复制 button can put everything on the pasteboard even when the
+// alert itself truncates a long URL.
+@property (nonatomic, copy) NSString *playbackErrorPayload;
 @property (nonatomic, assign) NSUInteger subtitleLoadGeneration;
 @property (nonatomic, assign) NSUInteger subtitleNoticeGeneration;
 // Graphic subtitle tracks dropped while parsing, so an empty picker can say why.
@@ -641,7 +644,30 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
             [context appendFormat:@" %@ / %ld kbps", [settings resolutionString], (long)settings.maxVideoBitrate / 1000];
         }
     }
-    [OEErrorAlertView showWithTitle:@"播放失败" message:message ?: @"未知错误" detail:context];
+    // Native UIAlertView, not the hand-rolled OEErrorAlertView: the system
+    // presents it in its own alert window, which follows the interface
+    // orientation. A custom view added straight to the key window cannot —
+    // on iOS 6-8 the window's coordinate space stays portrait (rotation is a
+    // transform on the root view controller), so the sheet would stay
+    // upright while the player is landscape.
+    NSMutableString *text = [NSMutableString stringWithString:message.length ? message : @"未知错误"];
+    if (context.length) [text appendFormat:@"\n\n%@", context];
+    // Keep the full text for the 复制 button even when the alert truncates a
+    // long URL on screen.
+    self.playbackErrorPayload = [text copy];
+    UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"播放失败"
+                                                    message:text
+                                                   delegate:self
+                                          cancelButtonTitle:@"关闭"
+                                          otherButtonTitles:@"复制", nil];
+    [alert show];
+}
+
+#pragma mark - UIAlertViewDelegate
+
+- (void)alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex {
+    if (buttonIndex == alertView.cancelButtonIndex) return;
+    [UIPasteboard generalPasteboard].string = self.playbackErrorPayload ?: @"";
 }
 
 - (void)viewDidAppear:(BOOL)animated {
