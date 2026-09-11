@@ -10,10 +10,8 @@
 #import "Controllers/OESeasonListViewController.h"
 #import "Controllers/OEMusicLibraryViewController.h"
 #import "Controllers/OEMusicPlayerViewController.h"
-#import "Controllers/OELoginViewController.h"
 
 static NSInteger const kOESearchPageSize = 60;
-static CGFloat const kOESearchBarHeight = 44.0;
 static CGFloat const kOEScopeHeight = 44.0;
 static NSInteger const kOESearchEmptyLabelTag = 997;
 
@@ -40,18 +38,19 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     self.items = @[];
     self.hasMorePages = YES;
 
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"登录"
-                                                                             style:UIBarButtonItemStylePlain
-                                                                            target:self
-                                                                            action:@selector(showLogin)];
-
-    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectZero];
+    self.searchBar = [[UISearchBar alloc] initWithFrame:CGRectMake(0, 0, 320, 44)];
     self.searchBar.delegate = self;
-    self.searchBar.placeholder = @"搜索影视或音乐";
+    self.searchBar.placeholder = @"搜索影视";
     if ([self.searchBar respondsToSelector:@selector(setReturnKeyType:)]) {
         self.searchBar.returnKeyType = UIReturnKeySearch;
     }
-    [self.view addSubview:self.searchBar];
+    if ([self.searchBar respondsToSelector:@selector(setAutocapitalizationType:)]) {
+        self.searchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    }
+    if ([self.searchBar respondsToSelector:@selector(setAutocorrectionType:)]) {
+        self.searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
+    }
+    self.navigationItem.titleView = self.searchBar;
 
     self.scopeControl = [[UISegmentedControl alloc] initWithItems:@[@"影视", @"音乐"]];
     self.scopeControl.selectedSegmentIndex = self.scope;
@@ -80,11 +79,8 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     [super viewDidLayoutSubviews];
     CGFloat w = self.view.bounds.size.width;
     CGFloat h = self.view.bounds.size.height;
-    // Cydia-style header: the field is inset from the screen edges and floats
-    // above the grouped list, not edge-to-edge under the navigation bar.
-    self.searchBar.frame = CGRectMake(7, 7, w - 14, kOESearchBarHeight);
-    self.scopeControl.frame = CGRectMake(13, kOESearchBarHeight + 11, w - 26, 30);
-    CGFloat tableTop = kOESearchBarHeight + kOEScopeHeight + 6;
+    self.scopeControl.frame = CGRectMake(12, 7, w - 24, 30);
+    CGFloat tableTop = kOEScopeHeight;
     self.tableView.frame = CGRectMake(0, tableTop, w, MAX(0, h - tableTop));
     [self positionPlaceholder];
 }
@@ -113,20 +109,17 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     self.tableView.backgroundColor = [OETheme libraryBackgroundColor];
     self.tableView.separatorColor = [OETheme separatorColor];
     // Neutral grays, never the Emby green: the scope control's selected
-    // segment and the search field's cursor / clear / cancel buttons all
-    // follow tintColor, which used to paint two green accents next to the
-    // field.
+    // segment follows neutral tint to keep consistent with the UI.
     UIColor *neutralTint = [OETheme isLight] ? [UIColor colorWithWhite:0.35 alpha:1.0]
                                              : [UIColor colorWithWhite:0.85 alpha:1.0];
     self.scopeControl.tintColor = neutralTint;
     if ([self.searchBar respondsToSelector:@selector(setBarTintColor:)]) {
-        // iOS 7+: barTintColor paints the bar behind the (light) field.
+        // iOS 7+: barTintColor paints the bar behind the field.
         self.searchBar.barTintColor = [OETheme navigationBarColor];
-        self.searchBar.tintColor = neutralTint;
+        self.searchBar.tintColor = [OETheme accentColor];
     } else {
-        // iOS 6: tintColor paints the field itself; a near-white value keeps
-        // Cydia's light rounded field on the dark header.
-        self.searchBar.tintColor = [UIColor colorWithWhite:0.97 alpha:1.0];
+        // iOS 6: tintColor on UISearchBar in navigation bar matches navigation bar.
+        self.searchBar.tintColor = [OETheme navigationBarColor];
     }
     if (self.navigationController) [OETheme applyToNavigationBar:self.navigationController.navigationBar];
 }
@@ -216,7 +209,6 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     NSUInteger generation = ++self.loadGeneration;
     self.loadingPage = YES;
     if (reset) {
-        self.title = @"搜索中…";
         [self updatePlaceholder];
     }
     __weak OESearchViewController *weakSelf = self;
@@ -228,7 +220,6 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
         OESearchViewController *strongSelf = weakSelf;
         if (!strongSelf || generation != strongSelf.loadGeneration) return;
         strongSelf.loadingPage = NO;
-        strongSelf.title = @"搜索";
         if (error) {
             if (error.code != -1 || ![error.domain isEqualToString:@"OEEmbyAPI"]) {
                 [OEErrorAlertView showWithTitle:@"搜索失败" error:error];
@@ -255,12 +246,6 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     self.pageStart = 0;
     [self.tableView reloadData];
     [self updatePlaceholder];
-}
-
-- (void)showLogin {
-    OELoginViewController *vc = [[OELoginViewController alloc] init];
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
-    [self presentViewController:nav animated:YES completion:nil];
 }
 
 #pragma mark - Placeholder
