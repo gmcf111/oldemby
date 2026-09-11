@@ -280,7 +280,7 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
                                       ([codec rangeOfString:@"microdvd"].location != NSNotFound) ||
                                       [codec isEqualToString:@"sub"];
                 if (!isText && !knownTextCodec) { skippedImageSubs++; continue; }
-                info.mediaSourceId = firstMediaSourceId;
+                info.mediaSourceId = [source[@"Id"] isKindOfClass:[NSString class]] ? source[@"Id"] : nil;
                 [subs addObject:info];
             }
         }
@@ -457,7 +457,7 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
             return;
         }
         if (self.activePlayerController || self.dismissingPlayer) return;
-        NSLog(@"[OldEmby] video stream URL: %@", streamURL);
+        NSLog(@"[OldEmby] video stream ready for %@", itemId);
         BOOL isDirect = [streamURL rangeOfString:@"Static=true" options:NSCaseInsensitiveSearch].location != NSNotFound;
         self.currentPlaybackIsDirect = isDirect;
         [self presentPlayerForURL:url isDirectStream:isDirect baseURLString:streamURL];
@@ -529,7 +529,7 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 - (void)movieLoadStateChanged:(NSNotification *)notification {
     MPMoviePlayerController *player = notification.object;
     if (player != self.activePlayerController.moviePlayer || self.dismissingPlayer) return;
-    if (player.loadState & MPMovieLoadStatePlayable) {
+    if ((player.loadState & MPMovieLoadStatePlayable) && !self.playerBecamePlayable) {
         self.playerBecamePlayable = YES;
         self.statusLabel.text = @"视频已就绪";
         @try { [player play]; } @catch (NSException *playEx) {
@@ -1233,7 +1233,7 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 - (void)swapPlayerToURL:(NSURL *)url isDirectStream:(BOOL)isDirectStream baseURLString:(NSString *)baseURLString {
     MPMoviePlayerController *player = self.activePlayerController.moviePlayer;
     if (!player) return;
-    NSLog(@"[OldEmby] episode stream URL: %@", url.absoluteString);
+    NSLog(@"[OldEmby] episode stream ready for %@", self.item.itemId);
     self.activeStreamURLString = baseURLString ?: url.absoluteString;
     self.currentPlaybackIsDirect = isDirectStream;
     [self removePlayerObserversForPlayer:player];
@@ -1423,7 +1423,7 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 
     NSURL *url = [NSURL URLWithString:newURL];
     if (!url) {
-        NSLog(@"[OldEmby] rebuilt URL is not parseable: %@", newURL);
+        NSLog(@"[OldEmby] rebuilt stream URL is not parseable");
         return;
     }
 

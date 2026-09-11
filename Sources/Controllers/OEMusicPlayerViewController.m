@@ -66,6 +66,8 @@
 @property (nonatomic, assign) BOOL favoriteRequestInFlight;
 @property (nonatomic, strong) UILabel *timeLabel;
 @property (nonatomic, assign) BOOL seeking;
+@property (nonatomic, assign) NSUInteger seekGestureGeneration;
+@property (nonatomic, assign) BOOL seekCommitted;
 @end
 
 @implementation OEMusicPlayerViewController
@@ -667,6 +669,8 @@
     // entirely on the slider's own value until the finger lifts, which is
     // what makes the thumb track the finger instead of snapping back.
     self.seeking = YES;
+    self.seekCommitted = NO;
+    ++self.seekGestureGeneration;
 }
 - (void)sliderChanged:(UISlider *)slider {
     OEMusicPlaybackManager *manager = [OEMusicPlaybackManager sharedManager];
@@ -677,12 +681,14 @@
 - (void)sliderTouchUp {
     // Committed by TouchUpInside/TouchUpOutside/TouchCancel only; guard
     // against a second event firing for the same gesture.
-    if (!self.seeking) return;
+    if (!self.seeking || self.seekCommitted) return;
+    self.seekCommitted = YES;
+    NSUInteger generation = self.seekGestureGeneration;
     float progress = self.progressSlider.value;
     __weak typeof(self) weakSelf = self;
     [[OEMusicPlaybackManager sharedManager] seekToProgress:progress completion:^(BOOL finished) {
-        // The manager clears its own seeking flag after a delay; clear the
-        // VC flag here too so refreshProgress can resume updating.
+        // Resume progress updates after the seek completes or is cancelled.
+        if (generation != weakSelf.seekGestureGeneration) return;
         weakSelf.seeking = NO;
         [weakSelf refreshProgress];
     }];

@@ -28,15 +28,23 @@ static NSString *OEEncodeQueryComponent(NSString *value) {
 // Emby may return transcoding URLs that contain raw file-name bytes.  iOS 6-9
 // NSURL rejects several of those characters, so retain only URI-safe bytes.
 // Existing %XX escapes are preserved to avoid double encoding server URLs.
-// Note '[' and ']' are intentionally escaped: iOS 6's CFURL parses strictly
-// per RFC 3986, where those bytes are only legal inside an IPv6 host - left
-// raw in a path or query they make URLWithString: return nil, which surfaced
-// to the user as "invalid playback URL".
+// Preserve brackets in the authority (IPv6 host), but escape them in paths
+// and queries where iOS 6's CFURL rejects raw brackets.
 static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     if (urlString.length == 0) return urlString;
     NSData *bytes = [urlString dataUsingEncoding:NSUTF8StringEncoding];
     if (!bytes) return urlString;
     const unsigned char *raw = (const unsigned char *)bytes.bytes;
+    NSUInteger authorityStart = NSNotFound, authorityEnd = 0;
+    for (NSUInteger i = 0; i + 2 < bytes.length; i++) {
+        if (raw[i] == ':' && raw[i + 1] == '/' && raw[i + 2] == '/') {
+            authorityStart = i + 3;
+            authorityEnd = authorityStart;
+            while (authorityEnd < bytes.length && raw[authorityEnd] != '/' && raw[authorityEnd] != '?' && raw[authorityEnd] != '#') authorityEnd++;
+            break;
+        }
+        if (raw[i] == '/' || raw[i] == '?' || raw[i] == '#') break;
+    }
     NSMutableString *out = [NSMutableString stringWithCapacity:urlString.length * 2];
     for (NSUInteger i = 0; i < bytes.length; i++) {
         unsigned char c = raw[i];
@@ -47,7 +55,8 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         BOOL isURISafe = isAlphaNumeric || c == '-' || c == '.' || c == '_' || c == '~' ||
             c == '!' || c == '$' || c == '&' || c == '\'' || c == '(' || c == ')' ||
             c == '*' || c == '+' || c == ',' || c == ';' || c == '=' || c == ':' ||
-            c == '@' || c == '/' || c == '?' || isEscapedByte;
+            c == '@' || c == '/' || c == '?' || isEscapedByte ||
+            ((c == '[' || c == ']') && i >= authorityStart && i < authorityEnd);
         if (isURISafe) [out appendFormat:@"%c", c];
         else [out appendFormat:@"%%%02X", c];
     }
@@ -181,11 +190,26 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     // scheme makes every later playback URL unparseable.
     NSString *lowerBase = [base lowercaseString];
     if (base.length && ![lowerBase hasPrefix:@"http://"] && ![lowerBase hasPrefix:@"https://"]) {
+        if ([lowerBase rangeOfString:@"://"].location != NSNotFound) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"服务器地址必须使用 HTTP 或 HTTPS"}]);
+            return;
+        }
         base = [@"http://" stringByAppendingString:base];
     }
     while ([base hasSuffix:@"/"] && base.length>1) base=[base substringToIndex:base.length-1];
     NSString *normalizedHost = base;
+    NSURL *hostURL = base.length ? [NSURL URLWithString:base] : nil;
+    NSString *scheme = [hostURL.scheme lowercaseString];
+    if (!hostURL.host.length || (![scheme isEqualToString:@"http"] && ![scheme isEqualToString:@"https"]) ||
+        hostURL.query != nil || hostURL.fragment != nil) {
+        if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"服务器地址无效，请输入 HTTP 或 HTTPS 地址"}]);
+        return;
+    }
     NSURL *url = [NSURL URLWithString:[base stringByAppendingString:@"/Users/AuthenticateByName"]];
+    if (!url) {
+        if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"服务器地址无法解析"}]);
+        return;
+    }
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
     req.HTTPMethod = @"POST";
     // Minimal auth header without token
@@ -358,45 +382,44 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
 }
 
 - (void)fetchStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion {
-    [self fetchPlaybackInfoForItem:itemId isAudio:isAudio completion:^(id result, NSError *error){
+    OETranscodeSettings *preferences = [OETranscodeSettings sharedSettings];
+    if (preferences.directPlay) {
+        // The global toggle must use the same codec gate as the direct button.
+        [self fetchDirectStreamURLForItem:itemId isAudio:isAudio completion:completion];
+        return;
+    }
+    // Keep request/profile and response URL construction on one settings
+    // snapshot even if the user changes preferences while the request runs.
+    OETranscodeSettings *s = [OETranscodeSettings defaultSettings];
+    s.directPlay = NO;
+    s.resolution = preferences.resolution;
+    s.maxVideoBitrate = preferences.maxVideoBitrate;
+    s.maxAudioBitrate = preferences.maxAudioBitrate;
+    OEServerConfig *config = [OEServerConfig sharedConfig];
+    NSDictionary *body = [OETranscodeBuilder playbackInfoBodyForItemId:itemId userId:config.userId settings:s isAudio:isAudio];
+    NSString *path = [NSString stringWithFormat:@"/Items/%@/PlaybackInfo", itemId];
+    [self POST:path jsonBody:body completion:^(id result, NSError *error){
         if (error) { if (completion) completion(nil, error); return; }
         if (![result isKindOfClass:[NSDictionary class]]) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"Invalid PlaybackInfo response"}]);
             return;
         }
         NSString *msId = nil;
-        NSString *url = [OETranscodeBuilder streamURLFromPlaybackInfoResponse:result itemId:itemId isAudio:isAudio host:[self baseURL] mediaSourceId:&msId];
+        NSString *url = [OETranscodeBuilder streamURLFromPlaybackInfoResponse:result itemId:itemId isAudio:isAudio host:[self baseURL] settings:s mediaSourceId:&msId];
         if (!url) { if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No stream URL in PlaybackInfo"}]); return; }
         // Append transcode query if needed and URL not already contains it.
         // A server-generated HLS TranscodingUrl (master.m3u8) already carries
         // every parameter and must not be rewritten.
-        OETranscodeSettings *s = [OETranscodeSettings sharedSettings];
         BOOL isHLSURL = [url rangeOfString:@".m3u8" options:NSCaseInsensitiveSearch].location != NSNotFound;
-        if (!s.directPlay && !isHLSURL && [url rangeOfString:@"VideoCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound && [url rangeOfString:@"AudioCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound) {
+        if (!isHLSURL && [url rangeOfString:@"VideoCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound && [url rangeOfString:@"AudioCodec=" options:NSCaseInsensitiveSearch].location == NSNotFound) {
             // A server may return a generic URL containing Static=true even
             // when the profile requested transcoding.  Replace that flag
             // before adding codec parameters instead of sending contradictory
             // duplicate query keys.
-            url = [url stringByReplacingOccurrencesOfString:@"Static=true" withString:@"Static=false"];
-            url = [url stringByReplacingOccurrencesOfString:@"static=true" withString:@"static=false"];
+            url = [self removeQueryParam:[url mutableCopy] key:@"Static"];
             NSString *qs = [OETranscodeBuilder transcodeQueryStringForSettings:s isAudio:isAudio];
             NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
-            // Emby stream endpoint also needs api_key? For direct stream, token via header is ok, but append if needed
-            NSString *token = [OEServerConfig sharedConfig].accessToken;
-            NSString *escapedToken = OEEncodeQueryComponent(token);
-            NSString *extra = [NSString stringWithFormat:@"%@%@&api_key=%@", sep, qs, escapedToken ?: @""];
-            url = [url stringByAppendingString:extra];
-        } else if (s.directPlay) {
-            // In direct play, ensure Static=true if a fallback or media source stream URL was used
-            url = [url stringByReplacingOccurrencesOfString:@"Static=false" withString:@"Static=true"];
-            url = [url stringByReplacingOccurrencesOfString:@"static=false" withString:@"static=true"];
-            // Ensure api_key for direct
-            if ([url rangeOfString:@"api_key" options:NSCaseInsensitiveSearch].location == NSNotFound) {
-                NSString *token = [OEServerConfig sharedConfig].accessToken;
-                NSString *escapedToken = OEEncodeQueryComponent(token);
-                NSString *sep = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
-                url = [url stringByAppendingFormat:@"%@api_key=%@", sep, escapedToken ?: @""];
-            }
+            url = [url stringByAppendingFormat:@"%@%@", sep, qs];
         }
         // Some Emby versions omit the token from an explicit
         // TranscodingUrl.  Movie/AVPlayer cannot send our custom headers, so
@@ -419,7 +442,7 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             if (recovered) CFRelease(recovered);
             if (recoveredURL.length && [NSURL URLWithString:recoveredURL]) finalURL = recoveredURL;
         }
-        NSLog(@"[OldEmby] playback URL for %@: %@", itemId, finalURL);
+        NSLog(@"[OldEmby] playback URL ready for %@", itemId);
         // Only reject what NSURL genuinely cannot turn into a URL object.
         // Do NOT additionally require scheme/host here: that check once
         // rejected perfectly playable audio URLs and broke music playback.
@@ -446,69 +469,45 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"Invalid PlaybackInfo response"}]);
             return;
         }
-        // Extract the MediaSourceId, container, and the direct stream URL
-        // directly from the PlaybackInfo response.  We intentionally do NOT
-        // call streamURLFromPlaybackInfoResponse here because that class method
-        // reads the *global* OETranscodeSettings (which may be in transcode
-        // mode) to decide which URL to build.
+        // Keep the URL, source ID and codec metadata from the same source.
         NSArray *sources = result[@"MediaSources"];
         if (![sources isKindOfClass:[NSArray class]] || sources.count == 0) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No media sources in PlaybackInfo"}]);
             return;
         }
-        NSString *msId = nil;
-        NSString *url = nil;
-        NSString *container = nil;
-        BOOL supportsDirectPlay = NO;
+        NSDictionary *source = nil;
         for (NSDictionary *candidate in sources) {
             if (![candidate isKindOfClass:[NSDictionary class]]) continue;
+            if (!source) source = candidate;
             id dsUrl = candidate[@"DirectStreamUrl"];
             if ([dsUrl isKindOfClass:[NSString class]] && [dsUrl length]) {
-                url = dsUrl;
-                msId = [candidate[@"Id"] isKindOfClass:[NSString class]] ? candidate[@"Id"] : msId;
-                container = [candidate[@"Container"] isKindOfClass:[NSString class]] ? [candidate[@"Container"] lowercaseString] : nil;
-                supportsDirectPlay = [candidate[@"SupportsDirectPlay"] boolValue];
+                source = candidate;
                 break;
             }
-            if (!msId) msId = [candidate[@"Id"] isKindOfClass:[NSString class]] ? candidate[@"Id"] : nil;
-            if (!container) container = [candidate[@"Container"] isKindOfClass:[NSString class]] ? [candidate[@"Container"] lowercaseString] : nil;
         }
-        // Check if the container is one iOS 6 MPMoviePlayer can natively play.
-        // MKV, AVI, WMV, FLV etc. will crash or produce -11828 errors.  Only
-        // mp4, mov, m4v, ts (MPEG-TS) are safe for direct playback.
-        NSString *lowerURL = url ? [url lowercaseString] : @"";
+        if (!source) {
+            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No valid media source in PlaybackInfo"}]);
+            return;
+        }
+        NSString *msId = [source[@"Id"] isKindOfClass:[NSString class]] ? source[@"Id"] : nil;
+        NSString *url = [source[@"DirectStreamUrl"] isKindOfClass:[NSString class]] ? source[@"DirectStreamUrl"] : nil;
+        NSString *container = [source[@"Container"] isKindOfClass:[NSString class]] ? [source[@"Container"] lowercaseString] : nil;
+        // A query value containing '.mp4' must never override an MKV container.
+        // Fall back to the path extension only when metadata is absent.
+        if (!container.length && url.length) {
+            container = [[[NSURL URLWithString:OEEscapeIllegalURLCharacters(url)] path] pathExtension].lowercaseString;
+        }
+        NSArray *supportedContainers = isAudio ? @[@"mp3", @"aac", @"m4a", @"wav", @"mp4", @"mov"] : @[@"mp4", @"mov", @"m4v"];
         BOOL containerSupported = NO;
-        if (container.length) {
-            static NSArray *supported = nil;
-            static dispatch_once_t onceToken;
-            dispatch_once(&onceToken, ^{ supported = @[@"mp4", @"mov", @"m4v", @"ts", @"mpeg", @"mpg"]; });
-            for (NSString *s in supported) {
-                if ([container containsString:s]) { containerSupported = YES; break; }
-            }
-        }
-        // Also check the URL file extension as a fallback.
-        if (!containerSupported) {
-            static NSArray *supportedExt = nil;
-            static dispatch_once_t onceToken2;
-            dispatch_once(&onceToken2, ^{ supportedExt = @[@".mp4", @".mov", @".m4v", @".ts", @".mpeg", @".mpg"]; });
-            for (NSString *ext in supportedExt) {
-                if ([lowerURL containsString:ext]) { containerSupported = YES; break; }
-            }
-        }
-        if (!containerSupported) {
-            if (isAudio) {
-                // Audio: also check common audio containers
-                static NSArray *audioExt = nil;
-                static dispatch_once_t onceToken3;
-                dispatch_once(&onceToken3, ^{ audioExt = @[@".mp3", @".aac", @".m4a", @".wav", @".flac"]; });
-                for (NSString *ext in audioExt) {
-                    if ([lowerURL containsString:ext]) { containerSupported = YES; break; }
-                }
+        for (NSString *name in [container componentsSeparatedByString:@","]) {
+            if ([supportedContainers containsObject:[name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]]) {
+                containerSupported = YES;
+                break;
             }
         }
         if (!containerSupported) {
             NSString *fmtName = container.length ? container.uppercaseString : @"未知格式";
-            NSString *msg = [NSString stringWithFormat:@"该视频为 %@ 格式，iOS 6 系统播放器无法直接播放。请使用上方的转码播放按钮。", fmtName];
+            NSString *msg = [NSString stringWithFormat:@"该媒体为 %@ 格式，iOS 6 系统播放器无法直接播放。请关闭设置中的直接播放并使用转码播放。", fmtName];
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-3 userInfo:@{NSLocalizedDescriptionKey:msg}]);
             return;
         }
@@ -520,52 +519,47 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         // @try/@catch at the call site can intercept — the process aborts.
         // Reject these early so the user is guided to the transcode button
         // instead of watching the app crash after buffering.
-        if (!isAudio) {
+        {
             NSString *videoCodec = nil;
             NSString *audioCodec = nil;
             NSString *h264Profile = nil;
             NSInteger videoWidth = 0, videoHeight = 0;
-            for (NSDictionary *candidate in sources) {
-                if (![candidate isKindOfClass:[NSDictionary class]]) continue;
-                NSArray *streams = candidate[@"MediaStreams"];
-                if (![streams isKindOfClass:[NSArray class]]) continue;
-                for (NSDictionary *stream in streams) {
-                    if (![stream isKindOfClass:[NSDictionary class]]) continue;
-                    NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
-                    if ([type isEqualToString:@"Video"] && !videoCodec.length) {
-                        videoCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
-                        h264Profile = [stream[@"Profile"] isKindOfClass:[NSString class]] ? [stream[@"Profile"] lowercaseString] : nil;
-                        id w = stream[@"Width"], h = stream[@"Height"];
-                        if ([w respondsToSelector:@selector(integerValue)]) videoWidth = [w integerValue];
-                        if ([h respondsToSelector:@selector(integerValue)]) videoHeight = [h integerValue];
-                    } else if ([type isEqualToString:@"Audio"] && !audioCodec.length) {
+            NSInteger videoBitDepth = 0;
+            id defaultAudioIndex = source[@"DefaultAudioStreamIndex"];
+            NSArray *streams = [source[@"MediaStreams"] isKindOfClass:[NSArray class]] ? source[@"MediaStreams"] : @[];
+            for (NSDictionary *stream in streams) {
+                if (![stream isKindOfClass:[NSDictionary class]]) continue;
+                NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
+                if (!isAudio && [type isEqualToString:@"Video"] && !videoCodec.length) {
+                    videoCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
+                    h264Profile = [stream[@"Profile"] isKindOfClass:[NSString class]] ? [stream[@"Profile"] lowercaseString] : nil;
+                    id w = stream[@"Width"], h = stream[@"Height"];
+                    if ([w respondsToSelector:@selector(integerValue)]) videoWidth = [w integerValue];
+                    if ([h respondsToSelector:@selector(integerValue)]) videoHeight = [h integerValue];
+                    if ([stream[@"BitDepth"] respondsToSelector:@selector(integerValue)]) videoBitDepth = [stream[@"BitDepth"] integerValue];
+                } else if ([type isEqualToString:@"Audio"]) {
+                    BOOL isDefaultAudio = [defaultAudioIndex respondsToSelector:@selector(integerValue)] &&
+                        [stream[@"Index"] respondsToSelector:@selector(integerValue)] &&
+                        [defaultAudioIndex integerValue] == [stream[@"Index"] integerValue];
+                    if (!audioCodec.length || isDefaultAudio) {
                         audioCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
                     }
                 }
-                if (videoCodec.length) break;
             }
             // Video codec: only H.264-family and MPEG-4 part 2 are decodable
             // by the iOS 6 system player.
-            if (videoCodec.length) {
-                static NSArray *unsupportedCodecs = nil;
-                static dispatch_once_t onceTokenCodec;
-                dispatch_once(&onceTokenCodec, ^{
-                    unsupportedCodecs = @[@"hevc", @"h265", @"h.265", @"vp9", @"vp09", @"av1", @"av01",
-                                          @"vvc", @"h266", @"h.266", @"wmv3", @"vc1", @"vc-1",
-                                          @"theora", @"mpeg1", @"mpeg1video", @"prores"];
-                });
-                for (NSString *bad in unsupportedCodecs) {
-                    if ([videoCodec isEqualToString:bad] || [videoCodec containsString:bad]) {
-                        NSString *msg = [NSString stringWithFormat:@"该视频使用 %@ 编码，iOS 6 系统播放器不支持直接播放此编码。请使用上方的转码播放按钮。", videoCodec.uppercaseString];
-                        if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
-                        return;
-                    }
-                }
+            if (videoCodec.length && ![@[@"h264", @"avc", @"avc1", @"mpeg4"] containsObject:videoCodec]) {
+                NSString *msg = [NSString stringWithFormat:@"该视频使用 %@ 编码，iOS 6 系统播放器不支持直接播放此编码。请关闭直接播放并使用转码播放。", videoCodec.uppercaseString];
+                if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
+                return;
             }
             // 10-bit H.264 (Hi10P, common in fansub encodes) has no hardware
             // decoder on iOS 6 and crashes the player exactly like HEVC.
-            if ([h264Profile rangeOfString:@"10"].location != NSNotFound) {
-                NSString *msg = [NSString stringWithFormat:@"该视频为 %@（10-bit H.264），iOS 6 无对应硬件解码器。请使用上方的转码播放按钮。", h264Profile];
+            if (videoBitDepth > 8 || (h264Profile.length &&
+                ([h264Profile rangeOfString:@"10"].location != NSNotFound ||
+                 [h264Profile rangeOfString:@"4:2:2"].location != NSNotFound ||
+                 [h264Profile rangeOfString:@"4:4:4"].location != NSNotFound))) {
+                NSString *msg = @"该视频的位深或编码规格超出 iOS 6 硬件解码能力。请关闭直接播放并使用转码播放。";
                 if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
                 return;
             }
@@ -575,22 +569,16 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
                 if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
                 return;
             }
-            // Audio codec: an mp4 with h264 video but a TrueHD/DTS/FLAC track
-            // is just as undecodable.  iOS 6 MPMoviePlayer handles AAC, MP3,
-            // (E-)AC3 and ALAC; everything else must go through transcode.
+            // AC3/E-AC3 and FLAC are not baseline iOS 6 audio formats.
             if (audioCodec.length) {
                 static NSArray *supportedAudio = nil;
                 static dispatch_once_t onceTokenAudio;
                 dispatch_once(&onceTokenAudio, ^{
-                    supportedAudio = @[@"aac", @"mp3", @"mp2", @"mp1", @"ac3", @"eac3", @"e-ac3",
-                                       @"alac", @"pcm", @"lpcm"];
+                    supportedAudio = @[@"aac", @"mp3", @"alac", @"pcm", @"lpcm"];
                 });
-                BOOL audioOK = NO;
-                for (NSString *good in supportedAudio) {
-                    if ([audioCodec isEqualToString:good] || [audioCodec containsString:good]) { audioOK = YES; break; }
-                }
+                BOOL audioOK = [supportedAudio containsObject:audioCodec] || [audioCodec hasPrefix:@"pcm_"];
                 if (!audioOK) {
-                    NSString *msg = [NSString stringWithFormat:@"该视频的音轨为 %@ 编码，iOS 6 系统播放器无法解码。请使用上方的转码播放按钮。", audioCodec.uppercaseString];
+                    NSString *msg = [NSString stringWithFormat:@"该媒体的音轨为 %@ 编码，iOS 6 系统播放器无法解码。请关闭直接播放并使用转码播放。", audioCodec.uppercaseString];
                     if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
                     return;
                 }
@@ -600,11 +588,11 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         // endpoint ourselves with Static=true (no transcoding).
         if (!url.length) {
             NSString *resource = isAudio ? @"Audio" : @"Videos";
-            NSString *msParam = msId.length ? [NSString stringWithFormat:@"MediaSourceId=%@&", msId] : @"";
-            url = [NSString stringWithFormat:@"/%@/%@/stream?%@Static=true", resource, itemId, msParam];
+            NSString *msParam = msId.length ? [NSString stringWithFormat:@"MediaSourceId=%@&", OEEncodeQueryComponent(msId)] : @"";
+            url = [NSString stringWithFormat:@"/%@/%@/stream?%@Static=true", resource, OEEncodeQueryComponent(itemId), msParam];
         }
         // Ensure the URL is absolute.
-        if (![url hasPrefix:@"http"]) {
+        if (![[url lowercaseString] hasPrefix:@"http://"] && ![[url lowercaseString] hasPrefix:@"https://"]) {
             NSString *base = [self baseURL];
             if (!base.length) {
                 if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"No host configured"}]);
@@ -616,8 +604,9 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             url = [base stringByAppendingString:url];
         }
         // Force Static=true so the server hands back the original file.
-        url = [url stringByReplacingOccurrencesOfString:@"Static=false" withString:@"Static=true"];
-        url = [url stringByReplacingOccurrencesOfString:@"static=false" withString:@"static=true"];
+        url = [self removeQueryParam:[url mutableCopy] key:@"Static"];
+        NSString *staticSeparator = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
+        url = [url stringByAppendingFormat:@"%@Static=true", staticSeparator];
         // Ensure the URL carries the api_key for direct file access.
         NSString *token = [OEServerConfig sharedConfig].accessToken;
         if (token.length && [url rangeOfString:@"api_key=" options:NSCaseInsensitiveSearch].location == NSNotFound) {
@@ -633,7 +622,7 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             if (recovered) CFRelease(recovered);
             if (recoveredURL.length && [NSURL URLWithString:recoveredURL]) finalURL = recoveredURL;
         }
-        NSLog(@"[OldEmby] direct stream URL for %@: %@", itemId, finalURL);
+        NSLog(@"[OldEmby] direct stream URL ready for %@", itemId);
         if (![NSURL URLWithString:finalURL]) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"直接播放地址无法解析：%@", url]}]);
             return;
@@ -680,9 +669,11 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
 
 - (NSDictionary *)mediaSourceWithEmbeddedLyricsForItem:(OEEmbyItem *)item playbackInfo:(NSDictionary *)playbackInfo {
     NSArray *sources = playbackInfo[@"MediaSources"];
+    if (![sources isKindOfClass:[NSArray class]]) return nil;
     for (id source in sources) {
         if (![source isKindOfClass:[NSDictionary class]]) continue;
         NSArray *streams = source[@"MediaStreams"];
+        if (![streams isKindOfClass:[NSArray class]]) continue;
         for (id stream in streams) {
             if (![stream isKindOfClass:[NSDictionary class]]) continue;
             NSInteger index = [stream[@"Index"] respondsToSelector:@selector(integerValue)] ? [stream[@"Index"] integerValue] : NSNotFound;
@@ -875,29 +866,19 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
 }
 
 - (NSMutableString *)removeQueryParam:(NSMutableString *)url key:(NSString *)key {
-    // Remove existing key=value& from the query string to avoid duplicates.
-    NSString *pattern = [NSString stringWithFormat:@"%@=", key];
-    NSRange searchRange = NSMakeRange(0, url.length);
-    NSRange found = [url rangeOfString:pattern options:NSCaseInsensitiveSearch range:searchRange];
-    if (found.location == NSNotFound) return url;
-    // Find the end of this param value (next & or end of string).
-    NSUInteger valueStart = NSMaxRange(found);
-    NSUInteger end = valueStart;
-    while (end < url.length) {
-        unichar c = [url characterAtIndex:end];
-        if (c == '&') break;
-        end++;
+    // Match complete query keys, not suffixes in other keys or bytes in a
+    // value. Remove every duplicate without decoding/re-encoding values.
+    NSRange queryStart = [url rangeOfString:@"?"];
+    if (queryStart.location == NSNotFound) return url;
+    NSString *base = [url substringToIndex:queryStart.location];
+    NSString *query = [url substringFromIndex:NSMaxRange(queryStart)];
+    NSMutableArray *parts = [NSMutableArray array];
+    for (NSString *part in [query componentsSeparatedByString:@"&"]) {
+        NSRange equals = [part rangeOfString:@"="];
+        NSString *name = equals.location == NSNotFound ? part : [part substringToIndex:equals.location];
+        if (part.length && [name caseInsensitiveCompare:key] != NSOrderedSame) [parts addObject:part];
     }
-    // Also consume the preceding & if the param is not the first query key.
-    NSUInteger removeStart = found.location;
-    if (removeStart > 0 && [url characterAtIndex:removeStart - 1] == '&') {
-        removeStart--;
-    } else if (end < url.length && [url characterAtIndex:end] == '&') {
-        // Consume trailing &
-        end++;
-    }
-    [url deleteCharactersInRange:NSMakeRange(removeStart, end - removeStart)];
-    return url;
+    return parts.count ? [[base stringByAppendingFormat:@"?%@", [parts componentsJoinedByString:@"&"]] mutableCopy] : [base mutableCopy];
 }
 
 #pragma mark - Casts

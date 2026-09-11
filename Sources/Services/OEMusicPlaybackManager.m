@@ -23,6 +23,8 @@
 @property (nonatomic, copy) NSString *activeStreamURLString;
 @property (nonatomic, assign) NSUInteger generation;
 @property (nonatomic, assign) BOOL seeking;
+@property (nonatomic, assign) NSUInteger seekGeneration;
+@property (nonatomic, assign) BOOL playbackEnded;
 @property (nonatomic, assign) BOOL userWantsPlayback;
 @property (nonatomic, assign) OEMusicRepeatMode repeatMode;
 @end
@@ -44,12 +46,17 @@
         NSInteger savedMode = [[NSUserDefaults standardUserDefaults] integerForKey:kDefaultsMusicRepeatMode];
         _repeatMode = (savedMode >= OEMusicRepeatModeOff && savedMode <= OEMusicRepeatModeOne) ? (OEMusicRepeatMode)savedMode : OEMusicRepeatModeOff;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioInterrupted:) name:AVAudioSessionInterruptionNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(resetForAccountChange) name:@"OEDidLoginNotification" object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(resetForAccountChange) name:@"OEDidLogoutNotification" object:nil];
     }
     return self;
 }
 
 - (BOOL)isActive { return self.currentItem != nil; }
-- (BOOL)isPlaying { return self.state == OEMusicPlaybackStatePlaying || self.state == OEMusicPlaybackStateBuffering; }
+- (BOOL)isPlaying {
+    return self.userWantsPlayback && (self.state == OEMusicPlaybackStateLoading ||
+        self.state == OEMusicPlaybackStatePlaying || self.state == OEMusicPlaybackStateBuffering);
+}
 
 - (void)publishState {
     [[NSNotificationCenter defaultCenter] postNotificationName:kNotificationMusicPlaybackStateChanged object:self];
@@ -58,6 +65,8 @@
 // Single funnel for every failure path so the UI always has copyable context:
 // which track, which URL, and the underlying NSError identity.
 - (void)failWithMessage:(NSString *)message error:(NSError *)error {
+    self.userWantsPlayback = NO;
+    [self.player pause];
     self.state = OEMusicPlaybackStateFailed;
     self.statusText = message.length ? message : @"播放失败";
     NSMutableString *detail = [NSMutableString string];
@@ -100,6 +109,7 @@
     if (self.currentIndex < 0 || self.currentIndex >= (NSInteger)self.playlist.count) return;
     NSUInteger generation = ++self.generation;
     [self cleanupPlayer];
+    self.playbackEnded = NO;
     self.currentItem = self.playlist[self.currentIndex];
     self.artwork = nil;
     self.progress = 0;
@@ -114,6 +124,7 @@
     // track now loading.
     self.lastErrorDetail = nil;
     self.activeStreamURLString = nil;
+    [self updateNowPlayingInfo];
     [self publishState];
 
     OEEmbyItem *item = self.currentItem;
@@ -180,7 +191,7 @@
     // stale callback must not mutate state for the new item.
     NSUInteger generation = self.generation;
     void (^applyState)(void) = ^{
-        if (generation != self.generation) return;
+        if (generation != self.generation || object != self.playerItem || self.state == OEMusicPlaybackStateFailed) return;
         if ([keyPath isEqualToString:@"status"]) {
             if (self.playerItem.status == AVPlayerItemStatusReadyToPlay) {
                 // Do not force playback when the user paused during buffering.
@@ -203,7 +214,7 @@
             self.state = OEMusicPlaybackStateBuffering;
             self.statusText = @"正在缓冲…";
             [self publishState];
-        } else if ([keyPath isEqualToString:@"playbackLikelyToKeepUp"] && self.playerItem.playbackLikelyToKeepUp && self.player.rate > 0) {
+        } else if ([keyPath isEqualToString:@"playbackLikelyToKeepUp"] && self.playerItem.playbackLikelyToKeepUp && self.userWantsPlayback && self.player.rate > 0) {
             self.state = OEMusicPlaybackStatePlaying;
             self.statusText = @"正在播放";
             [self publishState];
@@ -275,7 +286,7 @@
 
 - (void)resume {
     if (!self.currentItem) return;
-    if (!self.player || self.state == OEMusicPlaybackStateFailed) {
+    if (!self.player || self.state == OEMusicPlaybackStateFailed || self.playbackEnded) {
         self.userWantsPlayback = YES;
         [self loadCurrentItem];
         return;
@@ -302,6 +313,7 @@
 }
 
 - (void)next {
+    if (!self.currentItem || self.currentIndex < 0 || self.currentIndex >= (NSInteger)self.playlist.count) return;
     if (self.currentIndex + 1 < (NSInteger)self.playlist.count) {
         self.currentIndex++;
         [self loadCurrentItem];
@@ -313,6 +325,7 @@
 }
 
 - (void)previous {
+    if (!self.currentItem || self.currentIndex < 0 || self.currentIndex >= (NSInteger)self.playlist.count) return;
     if (self.currentIndex > 0) {
         self.currentIndex--;
         [self loadCurrentItem];
@@ -322,47 +335,56 @@
 }
 
 - (void)seekToProgress:(float)progress completion:(void(^)(BOOL finished))completion {
-    if (!self.player || self.duration <= 0) { if (completion) completion(NO); return; }
+    if (!self.player || self.duration <= 0 || !isfinite(self.duration) || !isfinite(progress) ||
+        self.playerItem.status != AVPlayerItemStatusReadyToPlay) { if (completion) completion(NO); return; }
+    NSUInteger generation = self.generation;
+    NSUInteger seekGeneration = ++self.seekGeneration;
     self.seeking = YES;
+    self.playbackEnded = NO;
     CMTime target = CMTimeMakeWithSeconds(MAX(0, MIN(1, progress)) * self.duration, 600);
-    // -seekToTime:completionHandler: is iOS 7+. Calling it on an iOS 6
-    // device causes an unrecognized-selector crash exactly when the user
-    // releases the full-player slider. The synchronous selector is available
-    // on the deployment target and is sufficient for this UI.
-    [self.player seekToTime:target];
-    // Optimistically update currentTime/progress to the seek target so the
-    // periodic time observer does not snap the slider back to the old
-    // position before AVPlayer finishes the asynchronous seek.
     self.currentTime = CMTimeGetSeconds(target);
     self.progress = MIN(1.0, MAX(0.0, progress));
-    // Keep seeking alive briefly so updateProgress (fired by the periodic
-    // time observer) does not overwrite the slider with a stale position
-    // during the seek. Clear after a short delay that covers the typical
-    // seek latency on iOS 6 devices.
+    [self updateNowPlayingInfo];
+    [self publishProgress];
+    // This completion API is available since iOS 5. Wait for the real seek,
+    // not a 300 ms timer that can expire before buffering finishes.
     __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        OEMusicPlaybackManager *strong = weakSelf;
-        if (!strong) return;
-        strong.seeking = NO;
-        [strong updateProgress];
-        if (completion) completion(YES);
-    });
+    [self.player seekToTime:target completionHandler:^(BOOL finished) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            OEMusicPlaybackManager *strong = weakSelf;
+            if (!strong || generation != strong.generation || seekGeneration != strong.seekGeneration) {
+                if (completion) completion(NO);
+                return;
+            }
+            strong.seeking = NO;
+            [strong updateProgress];
+            if (completion) completion(finished);
+        });
+    }];
 }
 
 - (void)itemDidFinish:(NSNotification *)notification {
-    if (self.repeatMode == OEMusicRepeatModeOne) {
-        [self seekToProgress:0 completion:nil];
-        if (!self.isPlaying) [self resume];
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self itemDidFinish:notification]; });
         return;
     }
-    if (self.currentIndex + 1 < (NSInteger)self.playlist.count) [self next];
-    else if (self.repeatMode == OEMusicRepeatModeAll && self.playlist.count) {
+    if (notification.object != self.playerItem) return;
+    if (self.userWantsPlayback && self.repeatMode == OEMusicRepeatModeOne) {
+        // AVPlayer automatically pauses at EOF; the cached UI state can
+        // still say Playing. Reload also supports non-seekable transcodes.
+        [self loadCurrentItem];
+        return;
+    }
+    if (self.userWantsPlayback && self.currentIndex + 1 < (NSInteger)self.playlist.count) [self next];
+    else if (self.userWantsPlayback && self.repeatMode == OEMusicRepeatModeAll && self.playlist.count) {
         self.currentIndex = 0;
         [self loadCurrentItem];
     }
     else {
-        self.progress = 0;
-        self.currentTime = 0;
+        self.playbackEnded = YES;
+        self.userWantsPlayback = NO;
+        self.progress = self.duration > 0 ? 1 : 0;
+        self.currentTime = self.duration;
         self.state = OEMusicPlaybackStatePaused;
         self.statusText = @"播放结束";
         [self updateNowPlayingInfo];
@@ -372,11 +394,20 @@
 }
 
 - (void)itemFailed:(NSNotification *)notification {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self itemFailed:notification]; });
+        return;
+    }
+    if (notification.object != self.playerItem) return;
     NSError *error = notification.userInfo[AVPlayerItemFailedToPlayToEndTimeErrorKey];
     [self failWithMessage:[NSString stringWithFormat:@"播放失败：%@", error.localizedDescription ?: @"媒体流中断"] error:error];
 }
 
 - (void)audioInterrupted:(NSNotification *)notification {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self audioInterrupted:notification]; });
+        return;
+    }
     NSNumber *type = notification.userInfo[AVAudioSessionInterruptionTypeKey];
     if ([type unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan) {
         [self pause];
@@ -397,6 +428,8 @@
 }
 
 - (void)cleanupPlayer {
+    ++self.seekGeneration;
+    self.seeking = NO;
     if (self.timeObserver) {
         [self.player removeTimeObserver:self.timeObserver];
         self.timeObserver = nil;
@@ -411,6 +444,27 @@
     [self.player pause];
     self.player = nil;
     self.playerItem = nil;
+}
+
+- (void)resetForAccountChange {
+    ++self.generation;
+    self.userWantsPlayback = NO;
+    [self cleanupPlayer];
+    self.playlist = @[];
+    self.currentIndex = NSNotFound;
+    self.currentItem = nil;
+    self.artwork = nil;
+    self.activeStreamURLString = nil;
+    self.lastErrorDetail = nil;
+    self.playbackEnded = NO;
+    self.progress = 0;
+    self.currentTime = 0;
+    self.duration = 0;
+    self.state = OEMusicPlaybackStateIdle;
+    self.statusText = @"未播放";
+    [self updateNowPlayingInfo];
+    [self publishState];
+    [self publishProgress];
 }
 
 - (void)dealloc {

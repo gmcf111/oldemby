@@ -48,6 +48,7 @@ jobs:
               "setBarStyle:": "setBarStyle:",
               "setBarTintColor:": "setBarTintColor:",
               "setEdgesForExtendedLayout:": "setEdgesForExtendedLayout:",
+              "containsString:": "containsString:",
           }
           violations = []
           for path in Path("Sources").rglob("*.[mh]"):
@@ -415,6 +416,25 @@ jobs:
           echo "IPA created:"
           ls -lh *.ipa
           unzip -l "$IPA_NAME" | head -10
+
+          # make package ran before the dyld fix. Rebuild every DEB with the
+          # exact verified/signed bundle that was placed in the IPA.
+          set -- packages/*.deb
+          [ -f "$1" ] || { echo "::error::No DEB produced by make package"; exit 1; }
+          for DEB in "$@"; do
+            DEB_ROOT=$(mktemp -d)
+            DEB_CHECK=$(mktemp -d)
+            dpkg-deb -R "$DEB" "$DEB_ROOT"
+            [ -f "$DEB_ROOT/Applications/OldEmby.app/OldEmby" ] \
+              || { echo "::error::DEB has no OldEmby executable"; exit 1; }
+            rm -rf "$DEB_ROOT/Applications/OldEmby.app"
+            cp -a Payload/OldEmby.app "$DEB_ROOT/Applications/"
+            # gzip is supported by the older dpkg shipped on iOS 6 jailbreaks.
+            dpkg-deb -Zgzip --root-owner-group --build "$DEB_ROOT" "$DEB"
+            dpkg-deb -x "$DEB" "$DEB_CHECK"
+            cmp Payload/OldEmby.app/OldEmby "$DEB_CHECK/Applications/OldEmby.app/OldEmby"
+            rm -rf "$DEB_ROOT" "$DEB_CHECK"
+          done
 
           # Rename the deb with the same beta identity for the release assets,
           # keeping the original name as a stable alias for the artifact.

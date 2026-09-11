@@ -117,6 +117,8 @@
     self.pageStart = 0;
     self.hasMorePages = YES;
     self.items = @[];
+    [self.tableView reloadData];
+    [[self.tableView viewWithTag:996] removeFromSuperview];
     [self loadPageAtStart:0 reset:YES];
 }
 

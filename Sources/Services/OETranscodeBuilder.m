@@ -1,5 +1,13 @@
 #import "OETranscodeBuilder.h"
 #import "Models/OEServerConfig.h"
+#import <CoreFoundation/CoreFoundation.h>
+
+static NSString *OEEncodeStreamComponent(NSString *value) {
+    if (!value.length) return @"";
+    CFStringRef escaped = CFURLCreateStringByAddingPercentEscapes(NULL, (__bridge CFStringRef)value,
+        NULL, CFSTR(":/?#[]@!$&'()*+,;=%"), kCFStringEncodingUTF8);
+    return escaped ? CFBridgingRelease(escaped) : @"";
+}
 
 @implementation OETranscodeBuilder
 
@@ -10,8 +18,8 @@
         // Only list containers iOS 6 MPMoviePlayer can natively decode:
         // mp4 and mov.  mkv/avi are NOT supported by the system player.
         NSDictionary *directProfile = isAudio
-            ? @{ @"Container": @"mp3,aac,m4a,wav", @"Type": @"Audio" }
-            : @{ @"Container": @"mp4,mov,m4v", @"Type": @"Video" };
+            ? @{ @"Container": @"mp3,aac,m4a,wav", @"Type": @"Audio", @"AudioCodec": @"mp3,aac,alac,pcm_s16le,pcm_s24le,pcm_s32le" }
+            : @{ @"Container": @"mp4,mov,m4v", @"Type": @"Video", @"VideoCodec": @"h264,mpeg4", @"AudioCodec": @"aac,mp3,alac" };
         return @{
             @"Name": @"OldEmby Direct",
             @"MaxStaticBitrate": @(100000000),
@@ -138,32 +146,22 @@
             (long)w, (long)h, (long)s.maxVideoBitrate, (long)s.maxVideoBitrate, (long)s.maxAudioBitrate];
 }
 
-+ (NSString *)streamURLFromPlaybackInfoResponse:(NSDictionary *)response itemId:(NSString *)itemId isAudio:(BOOL)isAudio host:(NSString *)host mediaSourceId:(NSString **)outId {
++ (NSString *)streamURLFromPlaybackInfoResponse:(NSDictionary *)response itemId:(NSString *)itemId isAudio:(BOOL)isAudio host:(NSString *)host settings:(OETranscodeSettings *)s mediaSourceId:(NSString **)outId {
     NSArray *sources = response[@"MediaSources"];
     if (![sources isKindOfClass:[NSArray class]] || sources.count == 0) return nil;
     NSDictionary *src = nil;
     NSString *url = nil;
-    // Prefer a source with an explicit transcoding URL, then any direct URL.
+    // Select only URLs for the requested mode. A direct URL in a transcode
+    // response must use our fallback, not hand an original MKV to the player.
     // PlaybackInfo may contain multiple versions/tracks and the first entry
     // is not guaranteed to be playable for this device profile.
     for (NSDictionary *candidate in sources) {
         if (![candidate isKindOfClass:[NSDictionary class]]) continue;
-        id candidateURL = candidate[@"TranscodingUrl"];
+        id candidateURL = candidate[s.directPlay ? @"DirectStreamUrl" : @"TranscodingUrl"];
         if ([candidateURL isKindOfClass:[NSString class]] && [candidateURL length]) {
             src = candidate;
             url = candidateURL;
             break;
-        }
-    }
-    if (!url) {
-        for (NSDictionary *candidate in sources) {
-            if (![candidate isKindOfClass:[NSDictionary class]]) continue;
-            id candidateURL = candidate[@"DirectStreamUrl"];
-            if ([candidateURL isKindOfClass:[NSString class]] && [candidateURL length]) {
-                src = candidate;
-                url = candidateURL;
-                break;
-            }
         }
     }
     // If no source includes a URL, retain the first valid source for the
@@ -174,9 +172,12 @@
         }
     }
     if (!src) return nil;
-    NSString *msId = [src[@"Id"] isKindOfClass:[NSString class]] ? src[@"Id"] : ([src[@"ETag"] isKindOfClass:[NSString class]] ? src[@"ETag"] : @"");
+    NSString *msId = [src[@"Id"] isKindOfClass:[NSString class]] ? src[@"Id"] : @"";
     if (outId) *outId = msId;
-    if (!url.length && ![OETranscodeSettings sharedSettings].directPlay && !isAudio) {
+    NSString *resolvedItemId = itemId.length ? itemId : ([response[@"ItemId"] isKindOfClass:[NSString class]] ? response[@"ItemId"] : nil);
+    NSString *encodedItemId = OEEncodeStreamComponent(resolvedItemId);
+    NSString *msParam = msId.length ? [NSString stringWithFormat:@"MediaSourceId=%@&", OEEncodeStreamComponent(msId)] : @"";
+    if (!url.length && !s.directPlay && !isAudio) {
         // Some servers (notably Emby 4.9 with selective profiles) answer a
         // transcode PlaybackInfo without any TranscodingUrl.  Official
         // clients do not give up there: they build the canonical HLS master
@@ -184,44 +185,37 @@
         // This mirrors Emby web / Kodi: /Videos/{id}/master.m3u8 with the
         // media source and codec constraints in the query string.  api_key is
         // appended by the caller (OEEmbyAPIClient fetchStreamURLForItem).
-        NSString *resolvedItemId = itemId ?: response[@"ItemId"] ?: @"";
         if (!resolvedItemId.length) return nil;
-        OETranscodeSettings *s = [OETranscodeSettings sharedSettings];
         OEServerConfig *config = [OEServerConfig sharedConfig];
-        url = [NSString stringWithFormat:@"/Videos/%@/master.m3u8?MediaSourceId=%@&DeviceId=%@&VideoCodec=h264&AudioCodec=aac&VideoBitrate=%ld&AudioBitrate=%ld&MaxWidth=%ld&MaxHeight=%ld&TranscodingMaxAudioChannels=2&SegmentContainer=ts&MinSegments=1&Static=false",
-               resolvedItemId, msId ?: @"", config.deviceId ?: @"",
+        url = [NSString stringWithFormat:@"/Videos/%@/master.m3u8?%@DeviceId=%@&VideoCodec=h264&AudioCodec=aac&VideoBitrate=%ld&AudioBitrate=%ld&MaxWidth=%ld&MaxHeight=%ld&TranscodingMaxAudioChannels=2&SegmentContainer=ts&MinSegments=1&Static=false&AllowVideoStreamCopy=false&AllowAudioStreamCopy=false",
+               encodedItemId, msParam, OEEncodeStreamComponent(config.deviceId),
                (long)s.maxVideoBitrate, (long)s.maxAudioBitrate,
                (long)[s widthForResolution], (long)[s heightForResolution]];
     }
-    if (!url.length && ![OETranscodeSettings sharedSettings].directPlay && isAudio) {
+    if (!url.length && !s.directPlay && isAudio) {
         // The universal endpoint is the audio endpoint guaranteed to honor a
         // transcode request; /Audio/.../stream can return the source file
         // untouched.  MP3 because iOS 6 AVPlayer chokes on ADTS AAC streams.
         OEServerConfig *config = [OEServerConfig sharedConfig];
-        NSString *resolvedItemId = itemId ?: response[@"ItemId"] ?: @"";
         if (!resolvedItemId.length) return nil;
-        url = [NSString stringWithFormat:@"/Audio/%@/universal?UserId=%@&DeviceId=%@&MaxStreamingBitrate=%ld&Container=mp3&AudioCodec=mp3",
-               resolvedItemId, config.userId ?: @"", config.deviceId ?: @"",
-               (long)[OETranscodeSettings sharedSettings].maxAudioBitrate];
+        url = [NSString stringWithFormat:@"/Audio/%@/universal?%@UserId=%@&DeviceId=%@&MaxStreamingBitrate=%ld&Container=mp3&AudioCodec=mp3&EnableDirectPlay=false&EnableDirectStream=false&AllowAudioStreamCopy=false",
+               encodedItemId, msParam, OEEncodeStreamComponent(config.userId), OEEncodeStreamComponent(config.deviceId),
+               (long)s.maxAudioBitrate];
     }
     if (!url.length) {
         // Emby 4.x may return MediaSources with SupportsDirectStream etc,
         // but no URL -> build the appropriate audio/video stream endpoint.
         // The media-source ID cannot be used as the video item ID.  Use the
         // original item ID supplied by the caller for this fallback URL.
-        NSString *resolvedItemId = itemId ?: response[@"ItemId"] ?: @"";
         if (!resolvedItemId.length) return nil;
         NSString *resource = isAudio ? @"Audio" : @"Videos";
-        // This method takes no settings argument; the Static flag mirrors the
-        // global preference the caller used when building the PlaybackInfo body.
-        NSString *staticFlag = [OETranscodeSettings sharedSettings].directPlay ? @"Static=true" : @"Static=false";
+        NSString *staticFlag = s.directPlay ? @"Static=true" : @"Static=false";
         // An empty MediaSourceId query value makes some Emby versions reject
         // the request outright - omit the key entirely in that case.
-        NSString *msParam = msId.length ? [NSString stringWithFormat:@"MediaSourceId=%@&", msId] : @"";
-        url = [NSString stringWithFormat:@"/%@/%@/stream?%@%@", resource, resolvedItemId, msParam, staticFlag];
+        url = [NSString stringWithFormat:@"/%@/%@/stream?%@%@", resource, encodedItemId, msParam, staticFlag];
     }
     // Ensure absolute URL
-    if ([url hasPrefix:@"http"]) return url;
+    if ([[url lowercaseString] hasPrefix:@"http://"] || [[url lowercaseString] hasPrefix:@"https://"]) return url;
     NSString *base = host;
     if (!base.length) return nil;
     while ([base hasSuffix:@"/"] && base.length > 1) base = [base substringToIndex:base.length - 1];

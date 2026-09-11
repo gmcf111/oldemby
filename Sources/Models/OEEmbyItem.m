@@ -65,6 +65,7 @@
     }
     if (it.itemType == OEEmbyItemTypeAudio) {
         NSArray *streams = [dict objectForKey:@"MediaStreams"];
+        if (![streams isKindOfClass:[NSArray class]]) streams = @[];
         for (id value in streams) {
             if (![self isSupportedEmbeddedLyricsStream:value]) continue;
             NSString *format = [self supportedLyricsFormatForStream:value];

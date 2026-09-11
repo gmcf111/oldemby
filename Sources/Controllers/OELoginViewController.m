@@ -106,7 +106,6 @@
         self.statusLabel.text = @"请填写服务器地址和用户名";
         return;
     }
-    if (![host hasPrefix:@"http"]) host = [@"http://" stringByAppendingString:host];
     self.statusLabel.text = @"正在登录...";
     self.loginBtn.enabled = NO;
 
@@ -117,7 +116,7 @@
             NSLog(@"[OldEmby] login error: %@", error);
         } else {
             self.statusLabel.text = @"登录成功";
-            NSLog(@"[OldEmby] login ok token=%@", [[OEServerConfig sharedConfig] accessToken]);
+            NSLog(@"[OldEmby] login succeeded");
             // Dismiss
             [self dismissViewControllerAnimated:YES completion:nil];
             // Notify library to reload

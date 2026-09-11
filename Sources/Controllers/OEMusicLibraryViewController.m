@@ -155,6 +155,8 @@ typedef NS_ENUM(NSInteger, OEMusicSortMode) {
     self.pageStart = 0;
     self.hasMorePages = YES;
     self.items = @[];
+    [self.tableView reloadData];
+    [[self.tableView viewWithTag:998] removeFromSuperview];
     [self loadPageAtStart:0 reset:YES];
 }
 
@@ -229,6 +231,7 @@ typedef NS_ENUM(NSInteger, OEMusicSortMode) {
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.row >= (NSInteger)self.items.count) return;
     OEEmbyItem *item = self.items[indexPath.row];
     if (item.itemType == OEEmbyItemTypeAudio) {
         [[OEMusicPlaybackManager sharedManager] playItem:item playlist:self.items];

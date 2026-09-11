@@ -21,6 +21,7 @@
                                          itemId:(NSString *)itemId
                                         isAudio:(BOOL)isAudio
                                            host:(NSString *)host
+                                       settings:(OETranscodeSettings *)settings
                                    mediaSourceId:(NSString **)outMediaSourceId;
 
 @end

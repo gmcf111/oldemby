@@ -158,7 +158,10 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
 - (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
     // Debounce: every keystroke would otherwise fire a request.
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(runSearch) object:nil];
-    [self performSelector:@selector(runSearch) withObject:nil afterDelay:0.35];
+    // Invalidate immediately, including the debounce window: an old page
+    // must not appear under the new term or trigger pagination for it.
+    [self resetSearchResults];
+    if ([self currentTerm].length) [self performSelector:@selector(runSearch) withObject:nil afterDelay:0.35];
 }
 
 - (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
@@ -177,10 +180,7 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
     searchBar.text = nil;
     [searchBar resignFirstResponder];
     [searchBar setShowsCancelButton:NO animated:YES];
-    self.items = @[];
-    self.hasSearched = NO;
-    [self.tableView reloadData];
-    [self updatePlaceholder];
+    [self resetSearchResults];
 }
 
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
@@ -188,17 +188,12 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
 }
 
 - (void)runSearch {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(runSearch) object:nil];
     NSString *term = [self currentTerm];
-    ++self.loadGeneration;
-    self.pageStart = 0;
-    self.hasMorePages = YES;
+    [self resetSearchResults];
     self.hasSearched = term.length > 0;
-    if (!term.length) {
-        self.items = @[];
-        [self.tableView reloadData];
-        [self updatePlaceholder];
-        return;
-    }
+    if (!term.length) return;
+    self.hasMorePages = YES;
     [self loadPageAtStart:0 reset:YES];
 }
 
@@ -238,11 +233,15 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
 
 - (void)resetForAccountChange {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(runSearch) object:nil];
+    [self resetSearchResults];
+}
+
+- (void)resetSearchResults {
     ++self.loadGeneration;
     self.items = @[];
     self.hasSearched = NO;
     self.loadingPage = NO;
-    self.hasMorePages = YES;
+    self.hasMorePages = NO;
     self.pageStart = 0;
     [self.tableView reloadData];
     [self updatePlaceholder];
@@ -333,6 +332,7 @@ static NSInteger const kOESearchEmptyLabelTag = 997;
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     [self.searchBar resignFirstResponder];
+    if (indexPath.row >= (NSInteger)self.items.count) return;
     OEEmbyItem *item = self.items[indexPath.row];
     if (self.scope == OESearchScopeMusic) {
         [self openMusicItem:item];

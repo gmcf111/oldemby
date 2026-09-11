@@ -62,6 +62,9 @@
 
 - (void)loadData {
     NSUInteger generation = ++self.loadGeneration;
+    self.libraries = @[];
+    [self.tableView reloadData];
+    [[self.tableView viewWithTag:999] removeFromSuperview];
     self.title = @"加载中…";
     [[OEEmbyAPIClient sharedClient] fetchViewsWithCompletion:^(id result, NSError *error) {
         if (generation != self.loadGeneration) return;
@@ -128,6 +131,7 @@
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.row >= (NSInteger)self.libraries.count) return;
     OEEmbyItem *library = self.libraries[indexPath.row];
     [self.navigationController pushViewController:[[OEPosterWallViewController alloc] initWithLibrary:library] animated:YES];
 }
