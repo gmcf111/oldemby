@@ -214,9 +214,10 @@ class MachO(object):
                     ordinal = imm
                     ord_pos, ord_is_uleb = p, False
                 elif top == OP_SET_DYLIB_ORDINAL_ULEB:
+                    ord_pos = p  # opcode byte; payload follows at +1
                     v, p = read_uleb(d, p + 1)
                     ordinal = v
-                    ord_pos, ord_is_uleb = p - 1, True  # opcode byte
+                    ord_is_uleb = True
                 elif top == OP_SET_DYLIB_SPECIAL_IMM:
                     ordinal = -imm if imm else 0
                     ord_pos, ord_is_uleb = p, False
