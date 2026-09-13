@@ -43,6 +43,7 @@ OldEmby_FILES = \
 	Sources/Views/OESubtitleOverlayView.m \
 	Sources/Views/OEErrorAlertView.m \
 	Sources/Controllers/OEFFmpegPlayerViewController.m \
+	Sources/Player/oe_memset_pattern16.c \
 	Sources/Player/KxMovieDecoder.m \
 	Sources/Player/KxMovieGLView.m \
 	Sources/Player/KxAudioManager.m
