@@ -49,6 +49,15 @@ cd "ffmpeg-$FFMPEG_VER"
 # libraries contain MKV/AVI/WMV/RM/TS with arbitrary codec mixes, and a
 # missing decoder means "please transcode" for the user), and cut what a
 # client never needs: encoders, muxers, filters, programs, devices, postproc.
+#
+# Toolchain notes (learned the hard way in CI):
+#   * The Linux clang here defaults to the HOST triple; like Theos itself we
+#     must pass -target armv7-apple-ios6.0 or every link test fails.
+#   * Archives go through the toolchain's llvm-ar (Apple ld reads Mach-O
+#     archives) and stripping is left to the app link (GNU strip cannot
+#     touch Mach-O object files).
+AR_BIN="$THEOS/toolchain/linux/iphone/bin/llvm-ar"
+[ -x "$AR_BIN" ] || AR_BIN="$(command -v ar)"
 common_args=(
   --prefix="$PREFIX"
   --target-os=darwin
@@ -56,11 +65,13 @@ common_args=(
   --cpu=cortex-a8
   --enable-cross-compile
   --cc="$CC"
+  --ar="$AR_BIN"
   --sysroot="$SDK"
   --enable-pic
   --enable-small
   --disable-doc
   --disable-programs
+  --disable-stripping
   --disable-avdevice
   --disable-postproc
   --disable-encoders
@@ -70,17 +81,17 @@ common_args=(
   --disable-bzlib
   --disable-lzma
   --disable-iconv
-  --extra-cflags="-arch armv7 -miphoneos-version-min=6.0 -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-incompatible-function-pointer-types"
-  --extra-ldflags="-arch armv7 -miphoneos-version-min=6.0 -framework Security -framework CoreFoundation"
+  --extra-cflags="-target armv7-apple-ios6.0 -miphoneos-version-min=6.0 -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-incompatible-function-pointer-types"
+  --extra-ldflags="-target armv7-apple-ios6.0 -miphoneos-version-min=6.0 -framework Security -framework CoreFoundation"
 )
 
 build_try() {
   local asm_flag="$1"
   echo "=== ffmpeg configure ($asm_flag) ==="
   make distclean >/dev/null 2>&1 || true
-  ./configure "${common_args[@]}" $asm_flag || return 1
-  make -j"$(nproc)" || return 1
-  make install >/dev/null
+  ./configure "${common_args[@]}" $asm_flag > ffbuild.log 2>&1 || { tail -n 30 ffbuild.log; return 1; }
+  make -j"$(nproc)" >> ffbuild.log 2>&1 || { tail -n 30 ffbuild.log; return 1; }
+  make install > /dev/null 2>> ffbuild.log
 }
 
 if build_try "--enable-neon"; then
@@ -89,7 +100,10 @@ elif build_try "--disable-asm --disable-neon"; then
   echo "ffmpeg: asm build failed; built pure-C fallback (decode will be slower)"
 else
   echo "::error::ffmpeg: both asm and no-asm builds failed"
-  tail -n 80 config.log 2>/dev/null || true
+  echo "--- config.log errors ---"
+  grep -iE "error|fatal|cannot|undefined" config.log 2>/dev/null | tail -n 40 || true
+  echo "--- last compiler invocations ---"
+  tail -n 60 ffbuild.log 2>/dev/null || true
   exit 1
 fi
 
