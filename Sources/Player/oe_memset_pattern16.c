@@ -15,29 +15,31 @@
 #include <string.h>
 
 // size is in bytes, filled by repeating the pattern of 4/8/16 bytes.
+// Signature matches the <string.h> declaration so the definitions below are
+// not "conflicting types" against the SDK header.
 static inline void oe_memset_pattern(void *target, const void *patternBuffer,
-                                     long long size, int patLen)
+                                     size_t size, int patLen)
 {
     uint8_t *dst = (uint8_t *)target;
     const uint8_t *pat = (const uint8_t *)patternBuffer;
-    long long i = 0;
-    for (; i + patLen <= size; i += patLen)
+    size_t i = 0;
+    for (; i + (size_t)patLen <= size; i += (size_t)patLen)
         memcpy(dst + i, pat, (size_t)patLen);
     if (i < size)
-        memcpy(dst + i, pat, (size_t)(size - i));
+        memcpy(dst + i, pat, size - i);
 }
 
-void memset_pattern16(void *target, const void *patternBuffer, long long size)
+void memset_pattern16(void *target, const void *patternBuffer, size_t size)
 {
     oe_memset_pattern(target, patternBuffer, size, 16);
 }
 
-void memset_pattern8(void *target, const void *patternBuffer, long long size)
+void memset_pattern8(void *target, const void *patternBuffer, size_t size)
 {
     oe_memset_pattern(target, patternBuffer, size, 8);
 }
 
-void memset_pattern4(void *target, const void *patternBuffer, long long size)
+void memset_pattern4(void *target, const void *patternBuffer, size_t size)
 {
     oe_memset_pattern(target, patternBuffer, size, 4);
 }
