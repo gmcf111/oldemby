@@ -257,7 +257,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor/ffmpeg
-          key: ffmpeg-2.8.22-armv7-ios6-v1
+          key: ffmpeg-2.8.22-armv7-ios6-v2
 
       - name: Build FFmpeg (armv7, iOS 6)
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'

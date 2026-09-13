@@ -81,7 +81,7 @@ common_args=(
   --disable-bzlib
   --disable-lzma
   --disable-iconv
-  --extra-cflags="-target armv7-apple-ios6.0 -miphoneos-version-min=6.0 -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-incompatible-function-pointer-types"
+  --extra-cflags="-target armv7-apple-ios6.0 -miphoneos-version-min=6.0 -fno-builtin-memset -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-incompatible-function-pointer-types"
   --extra-ldflags="-target armv7-apple-ios6.0 -miphoneos-version-min=6.0 -framework Security -framework CoreFoundation"
 )
 
