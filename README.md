@@ -100,7 +100,7 @@ oldemby/
 - 默认 `OETranscodeSettings.defaultSettings` → 720p H.264 4 Mbps，`OETranscodeBuilder` 在 `deviceProfile` 中置空 `DirectPlayProfiles`，强制 Emby 返回 `TranscodingUrl`
 - `POST /Items/{Id}/PlaybackInfo` Body 包含 `DeviceProfile.TranscodingProfiles[VideoCodec=h264, AudioCodec=aac, MaxStreamingBitrate=4000000]` 与 `CodecProfiles[Width<=1280,Height<=720]`
 - 设置页修改后 `[[OETranscodeSettings sharedSettings] save]` 写入 `NSUserDefaults` (`OETranscodeResolution`, `OETranscodeBitrate`, `OETranscodeDirectPlay`, `OEAudioBitrate`)
-- 直接播放开关开启时，`EnableDirectPlay=YES, EnableTranscoding=NO`, `DirectPlayProfiles` 包含 `mp4,mkv,avi,mov`
+- 直接播放开关开启时，`EnableDirectPlay=YES, EnableTranscoding=NO`, `DirectPlayProfiles` 仅包含系统播放器原生支持的 `mp4,mov,m4v`；MKV/AVI/AC3 等由内置 FFmpeg 播放器（kxmovie 核心 + armv7 静态 FFmpeg 2.8）直接拉取原始文件流本地解码，同样不经过服务器转码
 
 ## 兼容性保证
 

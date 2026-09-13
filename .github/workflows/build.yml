@@ -10,7 +10,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
 
     env:
       THEOS: ${{ github.workspace }}/theos
@@ -247,6 +247,26 @@ jobs:
           python3 -m pip install --quiet pillow
           python3 tools/gen_icons.py Resources
           ls -la Resources/*.png
+
+      # FFmpeg powers the local direct-play of MKV/AVI-class containers the
+      # system player cannot demux (Sources/Player + OEFFmpegPlayerViewController).
+      # Built once per script/version bump; the app links it statically, so no
+      # new dylibs ship and the iOS 6 binding patch / ldid flow is unchanged.
+      - name: Cache FFmpeg armv7 build
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/ffmpeg
+          key: ffmpeg-2.8.22-armv7-ios6-v1
+
+      - name: Build FFmpeg (armv7, iOS 6)
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          sudo apt-get install -y nasm
+          bash tools/build_ffmpeg.sh
+          du -sh vendor/ffmpeg
+          ls -lh vendor/ffmpeg/lib vendor/ffmpeg/include
 
       - name: Build (make package)
         run: |

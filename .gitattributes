@@ -1,0 +1,5 @@
+# Shell/Python executed on Linux CI must never receive CRLF endings
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+Makefile text eol=lf

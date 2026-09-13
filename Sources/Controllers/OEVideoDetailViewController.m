@@ -1,4 +1,5 @@
 #import "OEVideoDetailViewController.h"
+#import "OEFFmpegPlayerViewController.h"
 #import "Models/OEEmbyItem.h"
 #import "Models/OECastItem.h"
 #import "Models/OETranscodeSettings.h"
@@ -51,6 +52,9 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 @property (nonatomic, strong) UIScrollView *scrollView;
 @property (nonatomic, strong) UIView *contentView;
 @property (nonatomic, strong) MPMoviePlayerViewController *activePlayerController;
+// Full-screen FFmpeg direct-play engine (MKV/AVI…).  Presented modally over
+// this page; the MPMoviePlayer path above is untouched while it is active.
+@property (nonatomic, strong) OEFFmpegPlayerViewController *activeFFmpegPlayer;
 @property (nonatomic, assign) BOOL playerBecamePlayable;
 @property (nonatomic, assign) BOOL fetchingStream;
 @property (nonatomic, assign) BOOL dismissingPlayer;
@@ -59,6 +63,12 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 @property (nonatomic, strong) NSError *pendingPlaybackError;
 @property (nonatomic, copy) NSString *activeStreamURLString;
 @property (nonatomic, assign) BOOL currentPlaybackIsDirect;
+// Which fetch entry started this session (direct-play fetch vs transcode
+// fetch).  Unlike currentPlaybackIsDirect this is not derived from the URL,
+// so a lossless MKV remux (HLS, no Static=true) still counts as direct and
+// episode switches keep using the same entry instead of silently degrading
+// to a full transcode.
+@property (nonatomic, assign) BOOL currentPlaybackViaDirectFetch;
 @property (nonatomic, strong) NSArray *audioStreams;
 @property (nonatomic, strong) NSArray *subtitleStreams;
 @property (nonatomic, strong) NSString *activeMediaSourceId;
@@ -418,6 +428,7 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 #pragma mark - Playback
 
 - (void)playTapped {
+    self.currentPlaybackViaDirectFetch = [OETranscodeSettings sharedSettings].directPlay;
     [self beginStreamFetch:^(OEEmbyAPIClient *client, NSString *itemId, OEAPICompletion cb) {
         [client fetchStreamURLForItem:itemId isAudio:NO completion:cb];
     } statusText:@"正在请求 HLS 转码流…"];
@@ -425,6 +436,7 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
 
 - (void)directPlayTapped {
     if (self.fetchingStream || self.activePlayerController || self.dismissingPlayer) return;
+    self.currentPlaybackViaDirectFetch = YES;
     [self beginStreamFetch:^(OEEmbyAPIClient *client, NSString *itemId, OEAPICompletion cb) {
         [client fetchDirectStreamURLForItem:itemId isAudio:NO completion:cb];
     } statusText:@"正在请求直接播放地址…"];
@@ -452,7 +464,15 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
             [self showPlaybackError:error.localizedDescription ?: @"请求播放地址失败" detail:detail];
             return;
         }
-        NSString *streamURL = [result isKindOfClass:[NSString class]] ? result : nil;
+        NSString *streamURL = nil;
+        BOOL useFFmpeg = NO;
+        if ([result isKindOfClass:[NSDictionary class]]) {
+            // Direct-play routing decision from the API client.
+            streamURL = [(NSDictionary *)result objectForKey:@"url"];
+            useFFmpeg = [[(NSDictionary *)result objectForKey:@"useFFmpeg"] boolValue];
+        } else if ([result isKindOfClass:[NSString class]]) {
+            streamURL = result;
+        }
         NSURL *url = [NSURL URLWithString:streamURL];
         if (!url) {
             [self showPlaybackError:@"服务器返回了无效的播放地址"
@@ -461,11 +481,38 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
         }
         if (self.activePlayerController || self.dismissingPlayer) return;
         NSLog(@"[OldEmby] video stream ready for %@", itemId);
+        if (useFFmpeg) {
+            [self presentFFmpegPlayerForURL:url urlString:streamURL];
+            return;
+        }
         BOOL isDirect = [streamURL rangeOfString:@"Static=true" options:NSCaseInsensitiveSearch].location != NSNotFound;
         self.currentPlaybackIsDirect = isDirect;
         [self presentPlayerForURL:url isDirectStream:isDirect baseURLString:streamURL];
     };
     fetchBlock(client, itemId, handler);
+}
+
+// Hand the direct URL to the bundled FFmpeg player: local demux + software
+// decode of MKV/AVI-class media the system player cannot open.  The server
+// still performs no transcoding.
+- (void)presentFFmpegPlayerForURL:(NSURL *)url urlString:(NSString *)urlString {
+    if (!url) return;
+    OEFFmpegPlayerViewController *player = [[OEFFmpegPlayerViewController alloc] initWithContentURLString:urlString];
+    player.movieTitle = self.item.name;
+    player.itemId = self.item.itemId;
+    player.mediaSourceId = self.activeMediaSourceId;
+    player.subtitleTracks = self.subtitleStreams;
+    self.currentPlaybackIsDirect = YES;
+    self.statusLabel.text = @"本地直接播放中";
+    __weak typeof(self) weakSelf = self;
+    player.dismissHandler = ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.activeFFmpegPlayer = nil;
+        strongSelf.statusLabel.text = @"已退出播放";
+    };
+    self.activeFFmpegPlayer = player;
+    [self presentViewController:player animated:YES completion:nil];
 }
 
 - (void)removePlayerObserversForPlayer:(MPMoviePlayerController *)player {
@@ -1227,8 +1274,11 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
     self.fetchingStream = YES;
     OEEmbyAPIClient *client = [OEEmbyAPIClient sharedClient];
     NSString *itemId = target.itemId;
-    // Keep the mode the current playback started in.
-    BOOL direct = self.currentPlaybackIsDirect;
+    // Keep the fetch entry the current playback started in (direct vs
+    // transcode).  Use currentPlaybackViaDirectFetch rather than
+    // currentPlaybackIsDirect: MKV direct sessions carry the flag but the
+    // URL-derived heuristic must not flip a direct switch into a transcode.
+    BOOL direct = self.currentPlaybackViaDirectFetch;
     OEAPICompletion handler = ^(id result, NSError *error) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf || generation != strongSelf.playRequestGeneration) return;
@@ -1238,14 +1288,30 @@ static const NSTimeInterval kSubtitleNoticeDuration = 2.5;
                                    detail:[NSString stringWithFormat:@"错误域：%@\n错误码：%ld", error.domain ?: @"-", (long)error.code]];
             return;
         }
-        NSString *streamURL = [result isKindOfClass:[NSString class]] ? result : nil;
+        NSString *streamURL = nil;
+        BOOL nextNeedsFFmpeg = NO;
+        if ([result isKindOfClass:[NSDictionary class]]) {
+            streamURL = [(NSDictionary *)result objectForKey:@"url"];
+            nextNeedsFFmpeg = [[(NSDictionary *)result objectForKey:@"useFFmpeg"] boolValue];
+        } else if ([result isKindOfClass:[NSString class]]) {
+            streamURL = result;
+        }
         NSURL *url = [NSURL URLWithString:streamURL];
         if (!url) {
             [strongSelf showPlaybackError:@"服务器返回了无效的播放地址"
                                    detail:streamURL.length ? [NSString stringWithFormat:@"地址：%@", streamURL] : @"服务器未返回任何地址"];
             return;
         }
-        [strongSelf swapPlayerToURL:url isDirectStream:direct baseURLString:streamURL];
+        if (nextNeedsFFmpeg) {
+            // Episode switching lives in the system player's control bar;
+            // taking over here would need a dismiss-then-present dance.
+            // Tell the user to start the FFmpeg session from the detail page.
+            [strongSelf showPlaybackError:@"下一集需要本地 FFmpeg 直接播放，当前界面无法热切换。请退出后在详情页对该集点击“不转码直接播放”。"
+                                   detail:nil];
+            return;
+        }
+        BOOL nextIsDirect = [streamURL rangeOfString:@"Static=true" options:NSCaseInsensitiveSearch].location != NSNotFound;
+        [strongSelf swapPlayerToURL:url isDirectStream:nextIsDirect baseURLString:streamURL];
     };
     if (direct) {
         [client fetchDirectStreamURLForItem:itemId isAudio:NO completion:handler];

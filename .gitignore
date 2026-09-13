@@ -32,3 +32,7 @@ Resources/*.png
 # Prompt files - local only, not needed for build, do not track
 提示词/
 __pycache__/
+
+# FFmpeg armv7 build (reproducible in CI via tools/build_ffmpeg.sh)
+vendor/ffmpeg/
+.ffmpeg-build/

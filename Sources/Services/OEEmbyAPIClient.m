@@ -458,6 +458,15 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
     // Build a PlaybackInfo body with a direct-play (no transcode) profile so
     // the server returns the original file URL with Static=true.  This is
     // independent of the global transcode setting in OETranscodeSettings.
+    //
+    // Video completions receive an NSDictionary:
+    //   { @"url": NSString, @"useFFmpeg": NSNumber(BOOL) }
+    // useFFmpeg=YES means the iOS system player cannot open this file
+    // (MKV/AVI/WMV container, AC3/DTS audio, 10-bit H.264, …) and the
+    // bundled FFmpeg player should demux/decode it locally over the same
+    // direct URL - still with zero server-side transcoding.
+    // Audio completions keep the previous plain-NSString contract (the music
+    // path plays through AVPlayer).
     OEServerConfig *c = [OEServerConfig sharedConfig];
     OETranscodeSettings *direct = [OETranscodeSettings defaultSettings];
     direct.directPlay = YES;
@@ -497,92 +506,103 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
         if (!container.length && url.length) {
             container = [[[NSURL URLWithString:OEEscapeIllegalURLCharacters(url)] path] pathExtension].lowercaseString;
         }
-        NSArray *supportedContainers = isAudio ? @[@"mp3", @"aac", @"m4a", @"wav", @"mp4", @"mov"] : @[@"mp4", @"mov", @"m4v"];
+        NSArray *systemContainers = isAudio ? @[@"mp3", @"aac", @"m4a", @"wav", @"mp4", @"mov"] : @[@"mp4", @"mov", @"m4v"];
         BOOL containerSupported = NO;
         for (NSString *name in [container componentsSeparatedByString:@","]) {
-            if ([supportedContainers containsObject:[name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]]) {
+            if ([systemContainers containsObject:[name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]]) {
                 containerSupported = YES;
                 break;
             }
         }
-        if (!containerSupported) {
-            NSString *fmtName = container.length ? container.uppercaseString : @"未知格式";
-            NSString *msg = [NSString stringWithFormat:@"该媒体为 %@ 格式，iOS 6 系统播放器无法直接播放。请关闭设置中的直接播放并使用转码播放。", fmtName];
-            if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-3 userInfo:@{NSLocalizedDescriptionKey:msg}]);
-            return;
-        }
-        // Also check the actual streams: even an mp4 container may hold a
-        // codec that iOS 6 MPMoviePlayer cannot decode (H.265/HEVC, VP9,
-        // AV1, TrueHD, DTS, 10-bit H.264, …).  Playing such a file directly
-        // makes the system player throw an NSInvalidArgumentException from a
-        // delayed-perform callback in a later RunLoop tick, which no
-        // @try/@catch at the call site can intercept — the process aborts.
-        // Reject these early so the user is guided to the transcode button
-        // instead of watching the app crash after buffering.
-        {
-            NSString *videoCodec = nil;
-            NSString *audioCodec = nil;
-            NSString *h264Profile = nil;
-            NSInteger videoWidth = 0, videoHeight = 0;
-            NSInteger videoBitDepth = 0;
-            id defaultAudioIndex = source[@"DefaultAudioStreamIndex"];
-            NSArray *streams = [source[@"MediaStreams"] isKindOfClass:[NSArray class]] ? source[@"MediaStreams"] : @[];
-            for (NSDictionary *stream in streams) {
-                if (![stream isKindOfClass:[NSDictionary class]]) continue;
-                NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
-                if (!isAudio && [type isEqualToString:@"Video"] && !videoCodec.length) {
-                    videoCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
-                    h264Profile = [stream[@"Profile"] isKindOfClass:[NSString class]] ? [stream[@"Profile"] lowercaseString] : nil;
-                    id w = stream[@"Width"], h = stream[@"Height"];
-                    if ([w respondsToSelector:@selector(integerValue)]) videoWidth = [w integerValue];
-                    if ([h respondsToSelector:@selector(integerValue)]) videoHeight = [h integerValue];
-                    if ([stream[@"BitDepth"] respondsToSelector:@selector(integerValue)]) videoBitDepth = [stream[@"BitDepth"] integerValue];
-                } else if ([type isEqualToString:@"Audio"]) {
-                    BOOL isDefaultAudio = [defaultAudioIndex respondsToSelector:@selector(integerValue)] &&
-                        [stream[@"Index"] respondsToSelector:@selector(integerValue)] &&
-                        [defaultAudioIndex integerValue] == [stream[@"Index"] integerValue];
-                    if (!audioCodec.length || isDefaultAudio) {
-                        audioCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
-                    }
+        // Inspect the streams: they decide between the system player and the
+        // bundled FFmpeg player, and identify media NEITHER can decode
+        // (AV1/VP9/HEVC are hopeless for armv7 software decode - those stay
+        // on the transcode route).
+        NSString *videoCodec = nil;
+        NSString *audioCodec = nil;
+        NSString *h264Profile = nil;
+        NSInteger videoWidth = 0, videoHeight = 0;
+        NSInteger videoBitDepth = 0;
+        id defaultAudioIndex = source[@"DefaultAudioStreamIndex"];
+        NSArray *streams = [source[@"MediaStreams"] isKindOfClass:[NSArray class]] ? source[@"MediaStreams"] : @[];
+        for (NSDictionary *stream in streams) {
+            if (![stream isKindOfClass:[NSDictionary class]]) continue;
+            NSString *type = [stream[@"Type"] isKindOfClass:[NSString class]] ? stream[@"Type"] : @"";
+            if (!isAudio && [type isEqualToString:@"Video"] && !videoCodec.length) {
+                videoCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
+                h264Profile = [stream[@"Profile"] isKindOfClass:[NSString class]] ? [stream[@"Profile"] lowercaseString] : nil;
+                id w = stream[@"Width"], h = stream[@"Height"];
+                if ([w respondsToSelector:@selector(integerValue)]) videoWidth = [w integerValue];
+                if ([h respondsToSelector:@selector(integerValue)]) videoHeight = [h integerValue];
+                if ([stream[@"BitDepth"] respondsToSelector:@selector(integerValue)]) videoBitDepth = [stream[@"BitDepth"] integerValue];
+            } else if ([type isEqualToString:@"Audio"]) {
+                BOOL isDefaultAudio = [defaultAudioIndex respondsToSelector:@selector(integerValue)] &&
+                    [stream[@"Index"] respondsToSelector:@selector(integerValue)] &&
+                    [defaultAudioIndex integerValue] == [stream[@"Index"] integerValue];
+                if (!audioCodec.length || isDefaultAudio) {
+                    audioCodec = [stream[@"Codec"] isKindOfClass:[NSString class]] ? [stream[@"Codec"] lowercaseString] : nil;
                 }
             }
-            // Video codec: only H.264-family and MPEG-4 part 2 are decodable
-            // by the iOS 6 system player.
-            if (videoCodec.length && ![@[@"h264", @"avc", @"avc1", @"mpeg4"] containsObject:videoCodec]) {
-                NSString *msg = [NSString stringWithFormat:@"该视频使用 %@ 编码，iOS 6 系统播放器不支持直接播放此编码。请关闭直接播放并使用转码播放。", videoCodec.uppercaseString];
+        }
+        static NSArray *systemVideoCodecs = nil;   // iOS 6 HW decoder
+        static NSArray *ffmpegVideoCodecs = nil;   // comfortable armv7 software decode
+        static NSArray *systemAudioCodecs = nil;
+        static dispatch_once_t onceCodecs;
+        dispatch_once(&onceCodecs, ^{
+            systemVideoCodecs = @[@"h264", @"avc", @"avc1", @"mpeg4"];
+            ffmpegVideoCodecs = @[@"h264", @"avc", @"avc1", @"mpeg4", @"msmpeg4v1", @"msmpeg4v2", @"msmpeg4v3",
+                                  @"divx", @"xvid", @"wmv1", @"wmv2", @"wmv3", @"vc1", @"rv10", @"rv20",
+                                  @"rv30", @"rv40", @"flv", @"svq1", @"svq3", @"h263", @"h263p",
+                                  @"mpeg1video", @"mpeg2video", @"theora", @"vp6", @"vp6a", @"vp6f", @"vp8"];
+            systemAudioCodecs = @[@"aac", @"mp3", @"alac", @"pcm", @"lpcm"];
+        });
+        if (!isAudio) {
+            // Neither engine can cope: HEVC/VP9/AV1 (not in the FFmpeg
+            // build at all) and resolutions past 1080p defeat armv7; only
+            // the server can handle those.  10-bit H.264 stays routable:
+            // FFmpeg decodes hi10p (where the system player only crashes).
+            BOOL systemVideoOK = (!videoCodec.length || [systemVideoCodecs containsObject:videoCodec]);
+            BOOL ffmpegVideoOK = (!videoCodec.length || [ffmpegVideoCodecs containsObject:videoCodec]);
+            if (!systemVideoOK && !ffmpegVideoOK) {
+                NSString *msg = [NSString stringWithFormat:@"该视频使用 %@ 编码，本机的硬件与 FFmpeg 软解都无法承受。请使用转码播放。", videoCodec.uppercaseString ?: @"未知"];
                 if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
                 return;
             }
-            // 10-bit H.264 (Hi10P, common in fansub encodes) has no hardware
-            // decoder on iOS 6 and crashes the player exactly like HEVC.
-            if (videoBitDepth > 8 || (h264Profile.length &&
-                ([h264Profile rangeOfString:@"10"].location != NSNotFound ||
-                 [h264Profile rangeOfString:@"4:2:2"].location != NSNotFound ||
-                 [h264Profile rangeOfString:@"4:4:4"].location != NSNotFound))) {
-                NSString *msg = @"该视频的位深或编码规格超出 iOS 6 硬件解码能力。请关闭直接播放并使用转码播放。";
-                if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
-                return;
-            }
-            // Beyond 1080p the iOS 6 decoder rejects the stream outright.
+            // 4K sources exceed both decoders; only the server can cope.
             if (videoWidth > 1920 || videoHeight > 1088) {
-                NSString *msg = [NSString stringWithFormat:@"该视频分辨率为 %ld×%ld，超出 iOS 6 播放器的 1080p 上限。请使用上方的转码播放按钮。", (long)videoWidth, (long)videoHeight];
+                NSString *msg = [NSString stringWithFormat:@"该视频分辨率为 %ld×%ld，超出本机 1080p 播放能力。请使用转码播放。", (long)videoWidth, (long)videoHeight];
                 if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
                 return;
             }
-            // AC3/E-AC3 and FLAC are not baseline iOS 6 audio formats.
+        } else {
+            // Audio keeps the historical AVPlayer gates.
+            if (!containerSupported) {
+                NSString *fmtName = container.length ? container.uppercaseString : @"未知格式";
+                NSString *msg = [NSString stringWithFormat:@"该媒体为 %@ 格式，iOS 6 系统播放器无法直接播放。请关闭设置中的直接播放并使用转码播放。", fmtName];
+                if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-3 userInfo:@{NSLocalizedDescriptionKey:msg}]);
+                return;
+            }
             if (audioCodec.length) {
-                static NSArray *supportedAudio = nil;
-                static dispatch_once_t onceTokenAudio;
-                dispatch_once(&onceTokenAudio, ^{
-                    supportedAudio = @[@"aac", @"mp3", @"alac", @"pcm", @"lpcm"];
-                });
-                BOOL audioOK = [supportedAudio containsObject:audioCodec] || [audioCodec hasPrefix:@"pcm_"];
+                BOOL audioOK = [systemAudioCodecs containsObject:audioCodec] || [audioCodec hasPrefix:@"pcm_"];
                 if (!audioOK) {
                     NSString *msg = [NSString stringWithFormat:@"该媒体的音轨为 %@ 编码，iOS 6 系统播放器无法解码。请关闭直接播放并使用转码播放。", audioCodec.uppercaseString];
                     if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-4 userInfo:@{NSLocalizedDescriptionKey:msg}]);
                     return;
                 }
             }
+        }
+        // Routing: anything the system player cannot open goes to the bundled
+        // FFmpeg player, which demuxes + software-decodes the ORIGINAL file.
+        // The server still performs no transcoding.
+        BOOL useFFmpeg = NO;
+        if (!isAudio) {
+            BOOL systemVideoOK = (!videoCodec.length || [systemVideoCodecs containsObject:videoCodec]);
+            BOOL sysBitDepth = !(videoBitDepth > 8 || (h264Profile.length &&
+                ([h264Profile rangeOfString:@"10"].location != NSNotFound ||
+                 [h264Profile rangeOfString:@"4:2:2"].location != NSNotFound ||
+                 [h264Profile rangeOfString:@"4:4:4"].location != NSNotFound)));
+            BOOL systemAudioOK = (!audioCodec.length || [systemAudioCodecs containsObject:audioCodec] || [audioCodec hasPrefix:@"pcm_"]);
+            useFFmpeg = !(containerSupported && systemVideoOK && sysBitDepth && systemAudioOK);
         }
         // If no DirectStreamUrl was provided, build the canonical stream
         // endpoint ourselves with Static=true (no transcoding).
@@ -603,7 +623,9 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             if ([base hasSuffix:@"/emby"] && [url hasPrefix:@"/emby/"]) url = [url substringFromIndex:5];
             url = [base stringByAppendingString:url];
         }
-        // Force Static=true so the server hands back the original file.
+        // Force Static=true so the server hands back the original file: both
+        // the system player (native containers) and the FFmpeg player (MKV
+        // etc.) stream it byte-for-byte without any transcoding.
         url = [self removeQueryParam:[url mutableCopy] key:@"Static"];
         NSString *staticSeparator = [url rangeOfString:@"?"].location == NSNotFound ? @"?" : @"&";
         url = [url stringByAppendingFormat:@"%@Static=true", staticSeparator];
@@ -622,12 +644,15 @@ static NSString *OEEscapeIllegalURLCharacters(NSString *urlString) {
             if (recovered) CFRelease(recovered);
             if (recoveredURL.length && [NSURL URLWithString:recoveredURL]) finalURL = recoveredURL;
         }
-        NSLog(@"[OldEmby] direct stream URL ready for %@", itemId);
+        NSLog(@"[OldEmby] direct stream URL ready for %@ (ffmpeg=%d)", itemId, useFFmpeg);
         if (![NSURL URLWithString:finalURL]) {
             if (completion) completion(nil, [NSError errorWithDomain:@"OEEmbyAPI" code:-2 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"直接播放地址无法解析：%@", url]}]);
             return;
         }
-        if (completion) completion(finalURL, nil);
+        if (completion) {
+            if (isAudio) completion(finalURL, nil);
+            else completion(@{@"url": finalURL, @"useFFmpeg": @(useFFmpeg)}, nil);
+        }
     }];
 }
 

@@ -41,14 +41,18 @@ OldEmby_FILES = \
 	Sources/Views/OECastStripView.m \
 	Sources/Views/OEMediaInfoView.m \
 	Sources/Views/OESubtitleOverlayView.m \
-	Sources/Views/OEErrorAlertView.m
+	Sources/Views/OEErrorAlertView.m \
+	Sources/Controllers/OEFFmpegPlayerViewController.m \
+	Sources/Player/KxMovieDecoder.m \
+	Sources/Player/KxMovieGLView.m \
+	Sources/Player/KxAudioManager.m
 
-OldEmby_FRAMEWORKS = UIKit Foundation MediaPlayer AVFoundation CoreGraphics Accelerate QuartzCore CoreMedia AudioToolbox MediaToolbox
+OldEmby_FRAMEWORKS = UIKit Foundation MediaPlayer AVFoundation CoreGraphics Accelerate QuartzCore CoreMedia AudioToolbox MediaToolbox OpenGLES Security
 OldEmby_PRIVATE_FRAMEWORKS =
 
 # iOS 6 compatibility: no NSURLSession, use NSURLConnection; frame layout, not AutoLayout-dependent
-OldEmby_CFLAGS = -fobjc-arc -mios-version-min=6.0 -Wno-deprecated-declarations -Wno-unknown-pragmas -O2 -ISources -I.
-OldEmby_LDFLAGS = -Wl,-segalign,4000
+OldEmby_CFLAGS = -fobjc-arc -mios-version-min=6.0 -Wno-deprecated-declarations -Wno-unknown-pragmas -O2 -ISources -I. -Ivendor/ffmpeg/include
+OldEmby_LDFLAGS = -Wl,-segalign,4000 -Lvendor/ffmpeg/lib -lavformat -lavcodec -lswresample -lswscale -lavutil -lz
 
 # No entitlements: this is a regular GUI app. Theos signs with a plain
 # `ldid -S` pseudo-signature, which sideload tools (爱思助手/AltStore/

@@ -39,10 +39,15 @@ typedef void (^OEAPICompletion)(id result, NSError *error);
 
 // Playback
 - (void)fetchPlaybackInfoForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
+// Transcode-mode playback URL (HLS). With the global direct-play toggle on,
+// this delegates to fetchDirectStreamURLForItem and may return the routing
+// dictionary described below.
 - (void)fetchStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
 // Fetch a direct-stream URL with no transcoding — the server hands back the
-// original file as-is.  Used for content already in a format the device can
-// decode (e.g. older TV recordings in MPEG-2 / H.264 mp4).
+// original file as-is.  Audio items complete with an NSString URL.  Video
+// items complete with an NSDictionary {url, useFFmpeg}: useFFmpeg=YES marks
+// media the system player cannot open (MKV/AVI/AC3/10-bit…), to be routed to
+// the bundled FFmpeg player which decodes the same URL locally.
 - (void)fetchDirectStreamURLForItem:(NSString *)itemId isAudio:(BOOL)isAudio completion:(OEAPICompletion)completion;
 // Fetch server-provided lyrics first, then a compatible text stream embedded
 // in the audio container when the server has no standalone lyrics result.
