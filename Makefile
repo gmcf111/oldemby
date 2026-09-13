@@ -51,7 +51,11 @@ OldEmby_FRAMEWORKS = UIKit Foundation MediaPlayer AVFoundation CoreGraphics Acce
 OldEmby_PRIVATE_FRAMEWORKS =
 
 # iOS 6 compatibility: no NSURLSession, use NSURLConnection; frame layout, not AutoLayout-dependent
-OldEmby_CFLAGS = -fobjc-arc -mios-version-min=6.0 -Wno-deprecated-declarations -Wno-unknown-pragmas -O2 -ISources -I. -Ivendor/ffmpeg/include
+# -Wno-error: Theos passes -Wall -Werror by default. The vendored 2012-era
+# kxmovie core (Sources/Player) and the FFmpeg 2.8 headers it includes were
+# never clang-15-clean; warnings stay visible but only real errors fail the
+# build. OldEmby's own sources already pass -Wall -Werror unchanged.
+OldEmby_CFLAGS = -fobjc-arc -mios-version-min=6.0 -Wno-deprecated-declarations -Wno-unknown-pragmas -Wno-error -O2 -ISources -I. -Ivendor/ffmpeg/include
 OldEmby_LDFLAGS = -Wl,-segalign,4000 -Lvendor/ffmpeg/lib -lavformat -lavcodec -lswresample -lswscale -lavutil -lz
 
 # No entitlements: this is a regular GUI app. Theos signs with a plain

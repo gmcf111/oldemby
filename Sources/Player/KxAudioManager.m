@@ -22,6 +22,8 @@
 #import <Accelerate/Accelerate.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <ctype.h>
 #import "KxLogger.h"
 
 #define MAX_FRAME_SIZE 4096

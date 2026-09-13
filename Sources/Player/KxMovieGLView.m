@@ -522,8 +522,8 @@ enum {
     if (!fragShader)
         goto exit;
     
-	glAttachShader(_program, vertShader);
-	glAttachShader(_program, fragShader);
+    glAttachShader(_program, vertShader);
+    glAttachShader(_program, fragShader);
 	glBindAttribLocation(_program, ATTRIBUTE_VERTEX, "position");
     glBindAttribLocation(_program, ATTRIBUTE_TEXCOORD, "texcoord");
 	

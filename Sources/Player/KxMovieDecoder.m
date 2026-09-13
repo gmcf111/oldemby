@@ -1640,6 +1640,7 @@ static void FFLog(void* context, int level, const char* format, va_list args) {
     @autoreleasepool {
         //Trim time at the beginning and new line at the end
         NSString* message = [[NSString alloc] initWithFormat: [NSString stringWithUTF8String: format] arguments: args];
+        (void)message; (void)level; (void)context; // release builds: LoggerStream* compile to no-ops
         switch (level) {
             case 0:
             case 1:
