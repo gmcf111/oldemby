@@ -359,8 +359,10 @@ def main():
             continue
         if ord_pos is None:
             die("binding for %s has no ordinal opcode" % symbol.decode())
-        if ord_is_uleb:
-            die("unexpected multi-byte ordinal ULEB for %s" % symbol.decode())
+        # A ULEB ordinal just means the ordinal did not fit the 4-bit IMM
+        # (value >= 16, e.g. after linking the extra frameworks FFmpeg
+        # needs). set_ordinal rewrites the single-byte payload in place and
+        # refuses genuinely multi-byte ULEBs, so this path is safe.
         mo.set_ordinal(ord_pos, ord_is_uleb, fnd_idx)
         patched += 1
     print("fix_ios6_bindings: relocated %d bindings to Foundation" % patched)
