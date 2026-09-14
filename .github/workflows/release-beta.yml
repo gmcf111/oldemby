@@ -257,6 +257,26 @@ jobs:
           python3 tools/gen_icons.py Resources
           ls -la Resources/*.png
 
+      # FFmpeg powers the local direct-play of MKV/AVI-class containers the
+      # system player cannot demux (Sources/Player + OEFFmpegPlayerViewController).
+      # Built once per script/version bump; the app links it statically, so no
+      # new dylibs ship and the iOS 6 binding patch / ldid flow is unchanged.
+      - name: Cache FFmpeg armv7 build
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/ffmpeg
+          key: ffmpeg-2.8.22-armv7-ios6-v2
+
+      - name: Build FFmpeg (armv7, iOS 6)
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          sudo apt-get install -y nasm
+          bash tools/build_ffmpeg.sh
+          du -sh vendor/ffmpeg
+          ls -lh vendor/ffmpeg/lib vendor/ffmpeg/include
+
       - name: Build (make package)
         run: |
           set -e -o pipefail
@@ -417,34 +437,55 @@ jobs:
           ls -lh *.ipa
           unzip -l "$IPA_NAME" | head -10
 
-          # make package ran before the dyld fix. Rebuild every DEB with the
-          # exact verified/signed bundle that was placed in the IPA.
+          # make package ran before the dyld fix, so the DEB it produced still
+          # carries the un-patched binary. Rebuild it once, in place, with the
+          # exact verified/signed bundle that went into the IPA, then rename it
+          # to the beta identity.
+          #
+          # Why this workflow used to publish TWO DEBs with identical sizes:
+          # the beta-named file was created with `cp`, which left the
+          # Theos-named original (com.gmcf.oldemby_1.0.0_iphoneos-arm.deb) in
+          # packages/ as a second, byte-identical file. Both the Artifact
+          # upload path and the Release `files:` glob expand `packages/*.deb`,
+          # so both copies shipped. Rename instead of copy - and stop treating
+          # "N DEBs" as normal: the globs below assume exactly one, so anything
+          # else must fail here rather than surface as a duplicate asset.
           set -- packages/*.deb
-          [ -f "$1" ] || { echo "::error::No DEB produced by make package"; exit 1; }
-          for DEB in "$@"; do
-            DEB_ROOT=$(mktemp -d)
-            DEB_CHECK=$(mktemp -d)
-            dpkg-deb -R "$DEB" "$DEB_ROOT"
-            [ -f "$DEB_ROOT/Applications/OldEmby.app/OldEmby" ] \
-              || { echo "::error::DEB has no OldEmby executable"; exit 1; }
-            rm -rf "$DEB_ROOT/Applications/OldEmby.app"
-            cp -a Payload/OldEmby.app "$DEB_ROOT/Applications/"
-            # gzip is supported by the older dpkg shipped on iOS 6 jailbreaks.
-            dpkg-deb -Zgzip --root-owner-group --build "$DEB_ROOT" "$DEB"
-            dpkg-deb -x "$DEB" "$DEB_CHECK"
-            cmp Payload/OldEmby.app/OldEmby "$DEB_CHECK/Applications/OldEmby.app/OldEmby"
-            rm -rf "$DEB_ROOT" "$DEB_CHECK"
-          done
-
-          # Rename the single DEB to the beta identity. This used to be a
-          # `cp` that kept the original name as an alias, which put the
-          # identical bytes into the artifact (and the Beta Release) twice.
-          DEB=$(ls packages/*.deb 2>/dev/null | head -1)
-          if [ -n "$DEB" ]; then
-            DEB_NAME="OldEmby-${RELEASE_VERSION}-${RELEASE_BUILD_NUM}-${RELEASE_COMMIT}-armv7.deb"
-            mv "$DEB" "packages/$DEB_NAME"
-            ls -lh packages/
+          if [ ! -f "$1" ]; then
+            echo "::error::No DEB produced by make package"
+            exit 1
           fi
+          if [ "$#" -ne 1 ]; then
+            echo "::error::make package produced $# DEBs, exactly 1 expected:"
+            printf '  %s\n' "$@"
+            exit 1
+          fi
+          DEB="$1"
+          DEB_ROOT=$(mktemp -d)
+          DEB_CHECK=$(mktemp -d)
+          dpkg-deb -R "$DEB" "$DEB_ROOT"
+          [ -f "$DEB_ROOT/Applications/OldEmby.app/OldEmby" ] \
+            || { echo "::error::DEB has no OldEmby executable"; exit 1; }
+          rm -rf "$DEB_ROOT/Applications/OldEmby.app"
+          cp -a Payload/OldEmby.app "$DEB_ROOT/Applications/"
+          # gzip is supported by the older dpkg shipped on iOS 6 jailbreaks.
+          dpkg-deb -Zgzip --root-owner-group --build "$DEB_ROOT" "$DEB"
+          dpkg-deb -x "$DEB" "$DEB_CHECK"
+          cmp Payload/OldEmby.app/OldEmby "$DEB_CHECK/Applications/OldEmby.app/OldEmby"
+          rm -rf "$DEB_ROOT" "$DEB_CHECK"
+
+          # Rename (never copy) to the beta identity, then re-assert that
+          # exactly one .deb is left for the Artifact/Release globs to pick up.
+          mv "$DEB" \
+            "packages/OldEmby-${RELEASE_VERSION}-${RELEASE_BUILD_NUM}-${RELEASE_COMMIT}-armv7.deb"
+          set -- packages/*.deb
+          if [ "$#" -ne 1 ]; then
+            echo "::error::Expected exactly 1 DEB in packages/, found $#:"
+            printf '  %s\n' "$@"
+            exit 1
+          fi
+          ls -lh packages/
+          echo "Single DEB ready: $1"
 
       - name: Upload Artifact (IPA + deb)
         uses: actions/upload-artifact@v4
